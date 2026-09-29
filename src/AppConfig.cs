@@ -62,6 +62,30 @@ namespace MuroSoc
         [DataMember(Order = 12)]
         public Dictionary<string, string> KeyBindings { get; set; }
 
+        [DataMember(Order = 13)]
+        public bool ClockEnabled { get; set; }
+
+        [DataMember(Order = 14)]
+        public string ClockTimeZone { get; set; }
+
+        [DataMember(Order = 15)]
+        public string ClockCorner { get; set; }
+
+        [DataMember(Order = 16)]
+        public bool ClockShowSeconds { get; set; }
+
+        [DataMember(Order = 17)]
+        public bool ClockShowZone { get; set; }
+
+        [DataMember(Order = 18)]
+        public int ClockFontSize { get; set; }
+
+        [DataMember(Order = 19)]
+        public int CursorHideSeconds { get; set; }
+
+        [DataMember(Order = 20)]
+        public bool ClockAllMonitors { get; set; }
+
         public AppConfig()
         {
             SetDefaults();
@@ -156,6 +180,24 @@ namespace MuroSoc
                 }
             }
             KeyBindings = bindings;
+
+            if (ClockTimeZone == null)
+            {
+                ClockTimeZone = string.Empty;
+            }
+            string corner = (ClockCorner ?? string.Empty).ToLowerInvariant();
+            if (corner != "topleft" && corner != "topright" && corner != "bottomleft" && corner != "bottomright")
+            {
+                ClockCorner = "TopRight";
+            }
+            if (ClockFontSize < 10 || ClockFontSize > 96)
+            {
+                ClockFontSize = 18;
+            }
+            if (CursorHideSeconds < 0 || CursorHideSeconds > 3600)
+            {
+                CursorHideSeconds = 5;
+            }
         }
 
         [OnDeserializing]
@@ -179,6 +221,14 @@ namespace MuroSoc
             LoginUrlPatterns = new List<string>(LoginDetector.DefaultPatterns);
             Fullscreen = true;
             KeyBindings = Shortcuts.Defaults();
+            ClockEnabled = false;
+            ClockTimeZone = string.Empty;
+            ClockCorner = "TopRight";
+            ClockShowSeconds = false;
+            ClockShowZone = false;
+            ClockFontSize = 18;
+            ClockAllMonitors = false;
+            CursorHideSeconds = 5;
         }
 
         private static bool ContainsIgnoreCase(List<string> list, string value)

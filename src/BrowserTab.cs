@@ -23,6 +23,7 @@ namespace MuroSoc
         private bool refreshCheckRunning;
         private bool scriptDialogOpen;
         private string pauseReason;
+        private string pickerMode;
 
         private BrowserTab(ITabHost host, CoreWebView2Controller controller, TabModel settings, BrowserTab opener, bool isPopup)
         {
@@ -623,8 +624,123 @@ namespace MuroSoc
             });
         }
 
+        public async void StartPicker(string mode)
+        {
+            if (Core == null)
+            {
+                return;
+            }
+            pickerMode = mode == "hide" ? "hide" : "isolate";
+            try
+            {
+                Focus();
+                await Core.ExecuteScriptAsync("window.__muroSoc && window.__muroSoc.pick(" + (pickerMode == "hide" ? "'hide'" : "'isolate'") + ")");
+            }
+            catch (Exception ex)
+            {
+                pickerMode = null;
+                Log.Error("No se pudo iniciar el selector de elementos", ex);
+            }
+        }
+
+        public async void CapturePan()
+        {
+            if (Core == null)
+            {
+                return;
+            }
+            try
+            {
+                string result = await Core.ExecuteScriptAsync("window.__muroSoc ? window.__muroSoc.capturePan() : null");
+                PanState pan = PageScript.Parse<PanState>(result);
+                if (pan == null)
+                {
+                    RaiseNotice(new NoticeEventArgs(NoticeLevel.Warning, "No se pudo leer la posición de la página."));
+                    return;
+                }
+                Settings.PanEnabled = true;
+                Settings.PanX = Math.Max(0, pan.X);
+                Settings.PanY = Math.Max(0, pan.Y);
+                Settings.PanSelector = pan.Selector ?? string.Empty;
+                UpdatePageSettings();
+                RaiseNotice(new NoticeEventArgs(NoticeLevel.Info, "Encuadre fijado. Se restaura después de cada carga."));
+            }
+            catch (Exception ex)
+            {
+                Log.Error("No se pudo fijar el encuadre", ex);
+            }
+        }
+
+        public void ClearPan()
+        {
+            Settings.PanEnabled = false;
+            Settings.PanX = 0;
+            Settings.PanY = 0;
+            Settings.PanSelector = string.Empty;
+            UpdatePageSettings();
+        }
+
+        public void SetVirtualWidth(int width)
+        {
+            Settings.VirtualWidth = width;
+            if (width <= 0)
+            {
+                Settings.VirtualWidth = 0;
+                ApplyZoom(Settings.Zoom);
+            }
+            ApplyVirtualWidth();
+            RaiseStateChanged();
+            Wall.MarkDirty();
+        }
+
+        public async void SetCursorHidden(bool hidden)
+        {
+            if (Core == null)
+            {
+                return;
+            }
+            try
+            {
+                await Core.ExecuteScriptAsync("window.__muroSoc && window.__muroSoc.cursor(" + (hidden ? "true" : "false") + ")");
+            }
+            catch (Exception)
+            {
+            }
+        }
+
         private void HandlePageMessage(PageMessage message)
         {
+            if (message.Type == "pickcancel")
+            {
+                pickerMode = null;
+                return;
+            }
+            if (message.Type != "picked" || pickerMode == null || message.Mode != pickerMode)
+            {
+                return;
+            }
+            string selector = (message.Selector ?? string.Empty).Trim();
+            string mode = pickerMode;
+            pickerMode = null;
+            if (selector.Length == 0 || selector.Length > 1000 || selector.IndexOfAny(new char[] { '{', '}', '<', '>' }) >= 0)
+            {
+                return;
+            }
+            if (mode == "hide")
+            {
+                if (!Settings.HideSelectors.Contains(selector))
+                {
+                    Settings.HideSelectors.Add(selector);
+                }
+                RaiseNotice(new NoticeEventArgs(NoticeLevel.Info, "Elemento oculto. Para deshacerlo usa \"Mostrar elementos ocultos\"."));
+            }
+            else
+            {
+                Settings.IsolateSelector = selector;
+                RaiseNotice(new NoticeEventArgs(NoticeLevel.Info, "Elemento aislado. Para deshacerlo usa \"Quitar aislamiento\"."));
+            }
+            Log.Info((mode == "hide" ? "Elemento oculto" : "Elemento aislado") + " en " + Log.SafeUrl(Url));
+            UpdatePageSettings();
         }
 
         private void ApplyZoom(double zoom)

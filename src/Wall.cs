@@ -18,8 +18,13 @@ namespace MuroSoc
         private static Cell activeCell;
         private static Cell dragTarget;
         private static bool allowClose;
+        private static Point lastCursor;
+        private static DateTime lastCursorMove = DateTime.UtcNow;
+        private static bool cursorHidden;
 
         public static bool UiVisible { get; private set; }
+
+        public static bool IsLocked { get; private set; }
 
         public static bool EditMode { get; private set; }
 
@@ -57,6 +62,10 @@ namespace MuroSoc
                 LayoutName = state.LayoutName ?? string.Empty;
                 RestoreClosedTabs(state.ClosedTabs);
                 BuildWindows(state.Layout, warnings);
+                if (state.Locked)
+                {
+                    SetLocked(true);
+                }
                 Log.Info("Sesión restaurada" + (LayoutName.Length > 0 ? " (layout " + LayoutName + ")" : string.Empty));
                 if (!string.IsNullOrEmpty(startUrl))
                 {
@@ -99,6 +108,75 @@ namespace MuroSoc
                     cell.UpdateRefreshBadge();
                 }
             }
+            WallWindow main = MainWindow;
+            foreach (WallWindow window in Windows)
+            {
+                window.UpdateClock(App.Config.ClockAllMonitors || window == main, IsLocked);
+            }
+            UpdateCursor(now);
+        }
+
+        public static void SetLocked(bool locked)
+        {
+            if (locked)
+            {
+                RestoreMaximized();
+                SetEditMode(false);
+            }
+            IsLocked = locked;
+            WallWindow main = MainWindow;
+            foreach (WallWindow window in Windows)
+            {
+                window.SetLocked(locked, window == main);
+            }
+            Log.Info(locked ? "Muro bloqueado" : "Muro desbloqueado");
+            if (!locked && main != null)
+            {
+                main.Activate();
+            }
+        }
+
+        private static void UpdateCursor(DateTime now)
+        {
+            Point position = Cursor.Position;
+            if (position != lastCursor)
+            {
+                lastCursor = position;
+                lastCursorMove = now;
+                if (cursorHidden)
+                {
+                    SetCursorHidden(false);
+                }
+                return;
+            }
+            int limit = App.Config.CursorHideSeconds;
+            if (limit <= 0 || cursorHidden || (now - lastCursorMove).TotalSeconds < limit)
+            {
+                return;
+            }
+            Control under = ControlAt(position);
+            Form form = under == null ? null : under.FindForm();
+            if (form is WallWindow || form is LockOverlay)
+            {
+                SetCursorHidden(true);
+            }
+        }
+
+        private static void SetCursorHidden(bool hidden)
+        {
+            cursorHidden = hidden;
+            if (hidden)
+            {
+                Cursor.Hide();
+            }
+            else
+            {
+                Cursor.Show();
+            }
+            foreach (BrowserTab tab in AllTabs())
+            {
+                tab.SetCursorHidden(hidden);
+            }
         }
 
         public static void SaveState()
@@ -112,6 +190,7 @@ namespace MuroSoc
                 SessionState state = new SessionState();
                 state.LayoutName = LayoutName;
                 state.UiVisible = UiVisible;
+                state.Locked = IsLocked;
                 state.Layout = Snapshot(LayoutName);
                 state.ClosedTabs = ClosedTabsSnapshot();
                 LayoutStore.SaveState(state);
@@ -1001,6 +1080,14 @@ namespace MuroSoc
 
         public static bool TryHandleKey(Keys keys)
         {
+            if (IsLocked)
+            {
+                if (Shortcuts.Match(keys) == Shortcuts.LockWall)
+                {
+                    SetLocked(false);
+                }
+                return true;
+            }
             if (keys == Keys.Escape)
             {
                 if (RestoreMaximized())
@@ -1036,6 +1123,9 @@ namespace MuroSoc
             {
                 case Shortcuts.ToggleUi:
                     SetUiVisible(!UiVisible);
+                    break;
+                case Shortcuts.LockWall:
+                    SetLocked(!IsLocked);
                     break;
                 case Shortcuts.MaximizeCell:
                     ToggleMaximize();
@@ -1083,6 +1173,12 @@ namespace MuroSoc
                 case Shortcuts.SaveLayout:
                     SaveLayout();
                     break;
+                case Shortcuts.PickElement:
+                    if (cell != null && cell.ActiveTab != null)
+                    {
+                        cell.ActiveTab.StartPicker("isolate");
+                    }
+                    break;
             }
         }
 
@@ -1121,6 +1217,12 @@ namespace MuroSoc
             menu[menu.Count - 1].Shortcut = Shortcuts.Display(Shortcuts.EditLayout);
             menu.Add(MenuEntry.Item("Maximizar celda", Shortcuts.Display(Shortcuts.MaximizeCell), delegate { SetActiveCell(cell); ToggleMaximize(); }));
             menu.Add(MenuEntry.Check("Pantalla completa", App.Config.Fullscreen, delegate { ToggleFullscreen(); }));
+            menu.Add(MenuEntry.Check("Reloj", App.Config.ClockEnabled, delegate
+            {
+                App.Config.ClockEnabled = !App.Config.ClockEnabled;
+                App.SaveConfig();
+            }));
+            menu.Add(MenuEntry.Item("Bloquear muro", Shortcuts.Display(Shortcuts.LockWall), delegate { SetLocked(true); }));
             menu.Add(MenuEntry.Item("Recargar todo el muro", Shortcuts.Display(Shortcuts.ReloadWall), delegate { ReloadWall(); }));
             menu.Add(MenuEntry.Separator());
 

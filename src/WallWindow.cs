@@ -8,8 +8,10 @@ namespace MuroSoc
     internal sealed class WallWindow : Form
     {
         private readonly LayoutPanel panel;
+        private readonly ClockLabel clock;
         private Screen screen;
         private bool? appliedFullscreen;
+        private LockOverlay lockOverlay;
 
         public WallWindow(Screen screen)
         {
@@ -21,9 +23,18 @@ namespace MuroSoc
             ShowIcon = true;
 
             panel = new LayoutPanel();
+            clock = new ClockLabel();
+            Controls.Add(clock);
             Controls.Add(panel);
 
             Move += delegate { NotifyPositionChanged(); };
+            Resize += delegate
+            {
+                if (lockOverlay != null)
+                {
+                    lockOverlay.Bounds = Bounds;
+                }
+            };
             ApplyWindowMode();
         }
 
@@ -81,6 +92,42 @@ namespace MuroSoc
             }
         }
 
+        public void UpdateClock(bool showClock, bool locked)
+        {
+            if (showClock)
+            {
+                clock.UpdateClock(App.Config, locked);
+            }
+            else if (clock.Visible)
+            {
+                clock.Visible = false;
+            }
+        }
+
+        public void SetLocked(bool locked, bool activate)
+        {
+            if (locked)
+            {
+                if (lockOverlay == null)
+                {
+                    lockOverlay = new LockOverlay(this);
+                    lockOverlay.ShowOverlay();
+                }
+                if (activate)
+                {
+                    lockOverlay.Activate();
+                }
+                return;
+            }
+            if (lockOverlay != null)
+            {
+                LockOverlay closing = lockOverlay;
+                lockOverlay = null;
+                closing.Close();
+                closing.Dispose();
+            }
+        }
+
         protected override bool ProcessCmdKey(ref Message msg, Keys keyData)
         {
             if (Wall.TryHandleKey(keyData))
@@ -95,10 +142,19 @@ namespace MuroSoc
             if (!Wall.AllowClose && e.CloseReason == CloseReason.UserClosing)
             {
                 e.Cancel = true;
-                BeginInvoke((MethodInvoker)delegate { Wall.RequestExit(this); });
+                if (!Wall.IsLocked)
+                {
+                    BeginInvoke((MethodInvoker)delegate { Wall.RequestExit(this); });
+                }
                 return;
             }
             base.OnFormClosing(e);
+        }
+
+        protected override void OnFormClosed(FormClosedEventArgs e)
+        {
+            SetLocked(false, false);
+            base.OnFormClosed(e);
         }
     }
 }

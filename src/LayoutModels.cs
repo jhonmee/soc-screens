@@ -354,6 +354,9 @@ namespace MuroSoc
         [DataMember(Order = 4)]
         public List<TabModel> ClosedTabs { get; set; }
 
+        [DataMember(Order = 5)]
+        public bool Locked { get; set; }
+
         [OnDeserializing]
         private void OnDeserializing(StreamingContext context)
         {
