@@ -7,89 +7,154 @@ namespace MuroSoc
 {
     internal sealed class WallWindow : Form
     {
-        private readonly string startUrl;
-        private readonly Panel host;
-        private readonly NoticeBar notices;
-        private BrowserTab tab;
+        private readonly LayoutPanel panel;
+        private readonly ClockLabel clock;
+        private Screen screen;
+        private bool? appliedFullscreen;
+        private LockOverlay lockOverlay;
 
-        public WallWindow(string startUrl)
+        public WallWindow(Screen screen)
         {
-            this.startUrl = startUrl;
-            Text = "Muro SOC " + RuntimeInfo.AppVersion;
+            this.screen = screen;
+            Text = "Muro SOC";
             BackColor = Color.Black;
-            StartPosition = FormStartPosition.CenterScreen;
-            Size = new Size(1280, 800);
+            StartPosition = FormStartPosition.Manual;
+            KeyPreview = true;
+            ShowIcon = true;
 
-            host = new Panel();
-            host.Dock = DockStyle.Fill;
-            host.BackColor = Color.Black;
-            host.Resize += delegate { UpdateBrowserBounds(); };
+            panel = new LayoutPanel();
+            clock = new ClockLabel();
+            Controls.Add(clock);
+            Controls.Add(panel);
 
-            notices = new NoticeBar();
-
-            Controls.Add(host);
-            Controls.Add(notices);
-
-            Move += delegate
+            Move += delegate { NotifyPositionChanged(); };
+            Resize += delegate
             {
-                if (tab != null)
+                if (lockOverlay != null)
                 {
-                    tab.NotifyPositionChanged();
+                    lockOverlay.Bounds = Bounds;
                 }
             };
-
-            App.ConfigReloaded += OnConfigReloaded;
+            ApplyWindowMode();
         }
 
-        protected override async void OnShown(EventArgs e)
+        public Screen Screen
         {
-            base.OnShown(e);
-            try
+            get { return screen; }
+        }
+
+        public string DeviceName
+        {
+            get { return screen.DeviceName; }
+        }
+
+        public LayoutPanel Panel
+        {
+            get { return panel; }
+        }
+
+        public void ApplyWindowMode()
+        {
+            bool fullscreen = App.Config.Fullscreen;
+            if (appliedFullscreen.HasValue && appliedFullscreen.Value == fullscreen)
             {
-                tab = await BrowserTab.CreateAsync(host, BrowserEnvironment.DefaultProfile);
-                tab.NoticeRequested += delegate(object sender, NoticeEventArgs notice) { notices.ShowNotice(notice); };
-                tab.TitleChanged += delegate { Text = tab.Title + " - Muro SOC"; };
-                UpdateBrowserBounds();
-                tab.Controller.IsVisible = true;
-                tab.Navigate(startUrl);
+                return;
             }
-            catch (Exception ex)
+            appliedFullscreen = fullscreen;
+            if (fullscreen)
             {
-                Log.Error("No se pudo iniciar WebView2", ex);
-                MessageBox.Show(this, "No se pudo iniciar WebView2.\r\n\r\n" + ex.Message, "Muro SOC", MessageBoxButtons.OK, MessageBoxIcon.Error);
-                Close();
+                FormBorderStyle = FormBorderStyle.None;
+                WindowState = FormWindowState.Normal;
+                Bounds = screen.Bounds;
             }
+            else
+            {
+                FormBorderStyle = FormBorderStyle.Sizable;
+                Rectangle area = screen.WorkingArea;
+                int insetX = area.Width / 12;
+                int insetY = area.Height / 12;
+                Bounds = new Rectangle(area.Left + insetX, area.Top + insetY, area.Width - insetX * 2, area.Height - insetY * 2);
+            }
+            NotifyPositionChanged();
+        }
+
+        public void UpdateTitle(string layoutName)
+        {
+            string monitor = screen.DeviceName.Replace(@"\\.\", string.Empty);
+            Text = "Muro SOC - " + (string.IsNullOrEmpty(layoutName) ? "Sin layout" : layoutName) + " - " + monitor;
+        }
+
+        public void NotifyPositionChanged()
+        {
+            foreach (Cell cell in panel.Cells)
+            {
+                cell.NotifyPositionChanged();
+            }
+        }
+
+        public void UpdateClock(bool showClock, bool locked)
+        {
+            if (showClock)
+            {
+                clock.UpdateClock(App.Config, locked);
+            }
+            else if (clock.Visible)
+            {
+                clock.Visible = false;
+            }
+        }
+
+        public void SetLocked(bool locked, bool activate)
+        {
+            if (locked)
+            {
+                if (lockOverlay == null)
+                {
+                    lockOverlay = new LockOverlay(this);
+                    lockOverlay.ShowOverlay();
+                }
+                if (activate)
+                {
+                    lockOverlay.Activate();
+                }
+                return;
+            }
+            if (lockOverlay != null)
+            {
+                LockOverlay closing = lockOverlay;
+                lockOverlay = null;
+                closing.Close();
+                closing.Dispose();
+            }
+        }
+
+        protected override bool ProcessCmdKey(ref Message msg, Keys keyData)
+        {
+            if (Wall.TryHandleKey(keyData))
+            {
+                return true;
+            }
+            return base.ProcessCmdKey(ref msg, keyData);
+        }
+
+        protected override void OnFormClosing(FormClosingEventArgs e)
+        {
+            if (!Wall.AllowClose && e.CloseReason == CloseReason.UserClosing)
+            {
+                e.Cancel = true;
+                if (!Wall.IsLocked)
+                {
+                    BeginInvoke((MethodInvoker)delegate { Wall.RequestExit(this); });
+                }
+                return;
+            }
+            base.OnFormClosing(e);
         }
 
         protected override void OnFormClosed(FormClosedEventArgs e)
         {
-            App.ConfigReloaded -= OnConfigReloaded;
-            if (tab != null)
-            {
-                tab.Close();
-                tab = null;
-            }
+            SetLocked(false, false);
             base.OnFormClosed(e);
-        }
-
-        private void OnConfigReloaded(object sender, ConfigReloadedEventArgs e)
-        {
-            if (e.Error == null)
-            {
-                notices.ShowNotice(new NoticeEventArgs(NoticeLevel.Info, "Configuración actualizada."));
-            }
-            else
-            {
-                notices.ShowNotice(new NoticeEventArgs(NoticeLevel.Error, "config.json tiene un error y no se aplicó: " + e.Error));
-            }
-        }
-
-        private void UpdateBrowserBounds()
-        {
-            if (tab != null)
-            {
-                tab.SetBounds(host.ClientRectangle);
-            }
         }
     }
 }

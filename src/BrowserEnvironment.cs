@@ -15,11 +15,21 @@ namespace MuroSoc
 
         public static Task<CoreWebView2Environment> GetAsync()
         {
-            if (creation == null)
+            if (creation == null || creation.IsFaulted || creation.IsCanceled)
             {
                 creation = CreateAsync();
             }
             return creation;
+        }
+
+        public static void Reset(CoreWebView2Environment failed)
+        {
+            if (failed != null && failed == Current)
+            {
+                Current = null;
+                creation = null;
+                Log.Warn("Environment de WebView2 marcado para recrearse");
+            }
         }
 
         public static async Task<CoreWebView2Controller> CreateControllerAsync(IntPtr parentWindow, string profileName)
