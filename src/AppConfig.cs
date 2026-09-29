@@ -10,13 +10,13 @@ namespace MuroSoc
     internal sealed class PermissionRule
     {
         [DataMember(Order = 1)]
-        public string Domain;
+        public string Domain { get; set; }
 
         [DataMember(Order = 2)]
-        public string Permission;
+        public string Permission { get; set; }
 
         [DataMember(Order = 3)]
-        public bool Allow;
+        public bool Allow { get; set; }
     }
 
     [DataContract]
@@ -27,28 +27,28 @@ namespace MuroSoc
         private static readonly Regex ProfileNamePattern = new Regex("^[A-Za-z0-9_-]{1,64}$");
 
         [DataMember(Order = 1)]
-        public int SchemaVersion;
+        public int SchemaVersion { get; set; }
 
         [DataMember(Order = 2)]
-        public string HomeUrl;
+        public string HomeUrl { get; set; }
 
         [DataMember(Order = 3)]
-        public List<string> Profiles;
+        public List<string> Profiles { get; set; }
 
         [DataMember(Order = 4)]
-        public bool DevToolsEnabled;
+        public bool DevToolsEnabled { get; set; }
 
         [DataMember(Order = 5)]
-        public bool DownloadsEnabled;
+        public bool DownloadsEnabled { get; set; }
 
         [DataMember(Order = 6)]
-        public bool AllowlistEnabled;
+        public bool AllowlistEnabled { get; set; }
 
         [DataMember(Order = 7)]
-        public List<string> AllowedDomains;
+        public List<string> AllowedDomains { get; set; }
 
         [DataMember(Order = 8)]
-        public List<PermissionRule> PermissionRules;
+        public List<PermissionRule> PermissionRules { get; set; }
 
         public AppConfig()
         {
