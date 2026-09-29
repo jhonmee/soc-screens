@@ -50,6 +50,12 @@ namespace MuroSoc
         [DataMember(Order = 8)]
         public List<PermissionRule> PermissionRules { get; set; }
 
+        [DataMember(Order = 9)]
+        public bool PopupsAsTabs { get; set; }
+
+        [DataMember(Order = 10)]
+        public List<string> LoginUrlPatterns { get; set; }
+
         public AppConfig()
         {
             SetDefaults();
@@ -116,6 +122,20 @@ namespace MuroSoc
                 }
             }
             PermissionRules = rules;
+
+            List<string> patterns = new List<string>();
+            if (LoginUrlPatterns != null)
+            {
+                foreach (string pattern in LoginUrlPatterns)
+                {
+                    string clean = LoginDetector.CleanPattern(pattern);
+                    if (clean.Length > 0 && !ContainsIgnoreCase(patterns, clean))
+                    {
+                        patterns.Add(clean);
+                    }
+                }
+            }
+            LoginUrlPatterns = patterns;
         }
 
         [OnDeserializing]
@@ -135,6 +155,8 @@ namespace MuroSoc
             AllowlistEnabled = false;
             AllowedDomains = new List<string>();
             PermissionRules = new List<PermissionRule>();
+            PopupsAsTabs = false;
+            LoginUrlPatterns = new List<string>(LoginDetector.DefaultPatterns);
         }
 
         private static bool ContainsIgnoreCase(List<string> list, string value)

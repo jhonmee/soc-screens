@@ -10,21 +10,35 @@ namespace MuroSoc
 {
     internal sealed class BrowserTab
     {
-        private readonly Control host;
+        private ITabHost host;
         private CoreWebView2Controller controller;
 
-        private BrowserTab(Control host, CoreWebView2Controller controller, string profileName)
+        private BrowserTab(ITabHost host, CoreWebView2Controller controller, string profileName, BrowserTab opener, bool isPopup)
         {
             this.host = host;
             this.controller = controller;
             ProfileName = profileName;
+            Opener = opener;
+            IsPopup = isPopup;
         }
 
-        public event EventHandler<NoticeEventArgs> NoticeRequested;
-
-        public event EventHandler TitleChanged;
-
         public string ProfileName { get; private set; }
+
+        public BrowserTab Opener { get; private set; }
+
+        public bool IsPopup { get; private set; }
+
+        public bool OpenedByScript
+        {
+            get { return Opener != null; }
+        }
+
+        public bool IsAtLogin { get; private set; }
+
+        public ITabHost Host
+        {
+            get { return host; }
+        }
 
         public CoreWebView2Controller Controller
         {
@@ -51,14 +65,45 @@ namespace MuroSoc
             get { return Core == null ? string.Empty : Core.DocumentTitle; }
         }
 
-        public static async Task<BrowserTab> CreateAsync(Control host, string profileName)
+        public static Task<BrowserTab> CreateAsync(ITabHost host, string profileName)
+        {
+            return CreateAsync(host, profileName, null, false);
+        }
+
+        public static async Task<BrowserTab> CreateAsync(ITabHost host, string profileName, BrowserTab opener, bool isPopup)
         {
             string profile = AppConfig.IsValidProfileName(profileName) ? profileName : BrowserEnvironment.DefaultProfile;
-            CoreWebView2Controller created = await BrowserEnvironment.CreateControllerAsync(host.Handle, profile);
-            BrowserTab tab = new BrowserTab(host, created, profile);
+            CoreWebView2Controller created = await BrowserEnvironment.CreateControllerAsync(host.ContentHost.Handle, profile);
+            BrowserTab tab = new BrowserTab(host, created, profile, opener, isPopup);
             tab.Attach();
             App.RegisterTab(tab);
             return tab;
+        }
+
+        public void MoveTo(ITabHost newHost)
+        {
+            host = newHost;
+            if (controller != null)
+            {
+                controller.ParentWindow = newHost.ContentHost.Handle;
+                controller.NotifyParentWindowPositionChanged();
+            }
+        }
+
+        public void SetVisible(bool visible)
+        {
+            if (controller != null && controller.IsVisible != visible)
+            {
+                controller.IsVisible = visible;
+            }
+        }
+
+        public void Focus()
+        {
+            if (controller != null)
+            {
+                controller.MoveFocus(CoreWebView2MoveFocusReason.Programmatic);
+            }
         }
 
         public void Navigate(string url)
@@ -134,6 +179,10 @@ namespace MuroSoc
             CoreWebView2Controller closing = controller;
             controller = null;
             closing.Close();
+            if (Opener != null)
+            {
+                Opener = null;
+            }
         }
 
         private void Attach()
@@ -146,8 +195,73 @@ namespace MuroSoc
             core.NavigationStarting += OnNavigationStarting;
             core.LaunchingExternalUriScheme += OnLaunchingExternalUriScheme;
             core.ContextMenuRequested += OnContextMenuRequested;
-            core.DocumentTitleChanged += delegate { RaiseTitleChanged(); };
-            core.SourceChanged += delegate { RaiseTitleChanged(); };
+            core.NewWindowRequested += OnNewWindowRequested;
+            core.WindowCloseRequested += OnWindowCloseRequested;
+            core.DocumentTitleChanged += delegate { RaiseStateChanged(); };
+            core.SourceChanged += delegate { UpdateLoginState(); RaiseStateChanged(); };
+            core.NavigationCompleted += delegate { UpdateLoginState(); };
+        }
+
+        public void UpdateLoginState()
+        {
+            bool atLogin = !IsPopup && LoginDetector.IsLoginUrl(Url, App.Config.LoginUrlPatterns);
+            if (atLogin == IsAtLogin)
+            {
+                return;
+            }
+            IsAtLogin = atLogin;
+            Log.Info(atLogin ? "Pestaña en página de login: " + Log.SafeUrl(Url) : "Pestaña salió de la página de login: " + Log.SafeUrl(Url));
+            RaiseStateChanged();
+        }
+
+        private async void OnNewWindowRequested(object sender, CoreWebView2NewWindowRequestedEventArgs e)
+        {
+            CoreWebView2Deferral deferral = e.GetDeferral();
+            try
+            {
+                CoreWebView2WindowFeatures features = e.WindowFeatures;
+                bool popup = features != null && features.HasSize;
+                BrowserTab created;
+                if (popup && !App.Config.PopupsAsTabs)
+                {
+                    created = await PopupWindow.OpenAsync(this, features);
+                }
+                else
+                {
+                    created = await host.OpenScriptTabAsync(this);
+                }
+                if (created != null && created.Core != null)
+                {
+                    e.NewWindow = created.Core;
+                    e.Handled = true;
+                    Log.Info((popup ? "Popup abierto" : "Pestaña abierta por script") + " hacia " + Log.SafeUrl(e.Uri));
+                }
+            }
+            catch (Exception ex)
+            {
+                Log.Error("No se pudo abrir la ventana solicitada por la página", ex);
+            }
+            finally
+            {
+                deferral.Complete();
+            }
+        }
+
+        private void OnWindowCloseRequested(object sender, object e)
+        {
+            if (!OpenedByScript)
+            {
+                Log.Info("La página pidió cerrar una pestaña principal; se ignora");
+                return;
+            }
+            BrowserTab opener = Opener;
+            ITabHost closingHost = host;
+            closingHost.CloseScriptTab(this);
+            if (opener != null && !opener.IsClosed)
+            {
+                opener.host.FocusHost();
+                opener.Focus();
+            }
         }
 
         private void OnPermissionRequested(object sender, CoreWebView2PermissionRequestedEventArgs e)
@@ -232,10 +346,10 @@ namespace MuroSoc
             {
                 string target = profile;
                 string label = profile == ProfileName ? "Perfil " + profile + " (esta pestaña)..." : "Perfil " + profile + "...";
-                AddCommand(environment, signOut, label, delegate { App.SignOutProfile(host.FindForm(), target); });
+                AddCommand(environment, signOut, label, delegate { App.SignOutProfile(host.ContentHost.FindForm(), target); });
             }
             root.Children.Add(signOut);
-            AddCommand(environment, root, "Acerca de Muro SOC", delegate { App.ShowAbout(host.FindForm()); });
+            AddCommand(environment, root, "Acerca de Muro SOC", delegate { App.ShowAbout(host.ContentHost.FindForm()); });
             e.MenuItems.Add(environment.CreateContextMenuItem(string.Empty, null, CoreWebView2ContextMenuItemKind.Separator));
             e.MenuItems.Add(root);
         }
@@ -245,9 +359,10 @@ namespace MuroSoc
             CoreWebView2ContextMenuItem item = environment.CreateContextMenuItem(label, null, CoreWebView2ContextMenuItemKind.Command);
             item.CustomItemSelected += delegate
             {
-                if (!host.IsDisposed)
+                Control target = host.ContentHost;
+                if (!target.IsDisposed)
                 {
-                    host.BeginInvoke(action);
+                    target.BeginInvoke(action);
                 }
             };
             parent.Children.Add(item);
@@ -255,19 +370,14 @@ namespace MuroSoc
 
         private void RaiseNotice(NoticeEventArgs notice)
         {
-            EventHandler<NoticeEventArgs> handler = NoticeRequested;
-            if (handler != null)
-            {
-                handler(this, notice);
-            }
+            host.ShowNotice(this, notice);
         }
 
-        private void RaiseTitleChanged()
+        private void RaiseStateChanged()
         {
-            EventHandler handler = TitleChanged;
-            if (handler != null)
+            if (controller != null)
             {
-                handler(this, EventArgs.Empty);
+                host.OnTabStateChanged(this);
             }
         }
 

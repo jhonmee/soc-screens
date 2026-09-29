@@ -1,15 +1,20 @@
 // MuroSOC - WallWindow
 using System;
 using System.Drawing;
+using System.Threading.Tasks;
 using System.Windows.Forms;
 
 namespace MuroSoc
 {
-    internal sealed class WallWindow : Form
+    internal sealed class WallWindow : Form, ITabHost
     {
+        private static readonly Color LoginColor = Color.FromArgb(255, 140, 0);
+
         private readonly string startUrl;
+        private readonly Panel frame;
         private readonly Panel host;
         private readonly NoticeBar notices;
+        private readonly Label status;
         private BrowserTab tab;
 
         public WallWindow(string startUrl)
@@ -20,14 +25,28 @@ namespace MuroSoc
             StartPosition = FormStartPosition.CenterScreen;
             Size = new Size(1280, 800);
 
+            frame = new Panel();
+            frame.Dock = DockStyle.Fill;
+            frame.BackColor = Color.Black;
+
             host = new Panel();
             host.Dock = DockStyle.Fill;
             host.BackColor = Color.Black;
             host.Resize += delegate { UpdateBrowserBounds(); };
 
+            status = new Label();
+            status.Dock = DockStyle.Bottom;
+            status.Height = Dpi.Scale(this, 22);
+            status.TextAlign = ContentAlignment.MiddleLeft;
+            status.ForeColor = Color.Black;
+            status.Visible = false;
+
+            frame.Controls.Add(host);
+            frame.Controls.Add(status);
+
             notices = new NoticeBar();
 
-            Controls.Add(host);
+            Controls.Add(frame);
             Controls.Add(notices);
 
             Move += delegate
@@ -41,16 +60,57 @@ namespace MuroSoc
             App.ConfigReloaded += OnConfigReloaded;
         }
 
+        public Control ContentHost
+        {
+            get { return host; }
+        }
+
+        public Task<BrowserTab> OpenScriptTabAsync(BrowserTab opener)
+        {
+            return PopupWindow.OpenAsync(opener, null);
+        }
+
+        public void CloseScriptTab(BrowserTab closing)
+        {
+        }
+
+        public void OnTabStateChanged(BrowserTab changed)
+        {
+            Text = changed.Title + " - Muro SOC";
+            if (changed.IsAtLogin)
+            {
+                frame.Padding = new Padding(Dpi.Scale(this, 3));
+                frame.BackColor = LoginColor;
+                status.BackColor = LoginColor;
+                status.Text = "  Requiere login";
+                status.Visible = true;
+            }
+            else
+            {
+                frame.Padding = Padding.Empty;
+                frame.BackColor = Color.Black;
+                status.Visible = false;
+            }
+        }
+
+        public void ShowNotice(BrowserTab source, NoticeEventArgs notice)
+        {
+            notices.ShowNotice(notice);
+        }
+
+        public void FocusHost()
+        {
+            Activate();
+        }
+
         protected override async void OnShown(EventArgs e)
         {
             base.OnShown(e);
             try
             {
-                tab = await BrowserTab.CreateAsync(host, BrowserEnvironment.DefaultProfile);
-                tab.NoticeRequested += delegate(object sender, NoticeEventArgs notice) { notices.ShowNotice(notice); };
-                tab.TitleChanged += delegate { Text = tab.Title + " - Muro SOC"; };
+                tab = await BrowserTab.CreateAsync(this, BrowserEnvironment.DefaultProfile);
                 UpdateBrowserBounds();
-                tab.Controller.IsVisible = true;
+                tab.SetVisible(true);
                 tab.Navigate(startUrl);
             }
             catch (Exception ex)
@@ -77,6 +137,10 @@ namespace MuroSoc
             if (e.Error == null)
             {
                 notices.ShowNotice(new NoticeEventArgs(NoticeLevel.Info, "Configuración actualizada."));
+                if (tab != null)
+                {
+                    tab.UpdateLoginState();
+                }
             }
             else
             {
