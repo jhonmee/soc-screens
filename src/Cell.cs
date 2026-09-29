@@ -260,6 +260,10 @@ namespace MuroSoc
             {
                 strip.Invalidate();
             }
+            if (tab != null && tab.ErrorText != null)
+            {
+                UpdateChrome();
+            }
         }
 
         public void FocusAddress()

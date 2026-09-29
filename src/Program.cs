@@ -14,6 +14,15 @@ namespace MuroSoc
         {
             Application.EnableVisualStyles();
             Application.SetCompatibleTextRenderingDefault(false);
+            Application.SetUnhandledExceptionMode(UnhandledExceptionMode.CatchException);
+            Application.ThreadException += delegate(object sender, System.Threading.ThreadExceptionEventArgs e)
+            {
+                Log.Error("Error no controlado en la interfaz", e.Exception);
+            };
+            AppDomain.CurrentDomain.UnhandledException += delegate(object sender, UnhandledExceptionEventArgs e)
+            {
+                Log.Error("Error no controlado", e.ExceptionObject as Exception);
+            };
 
             string runtimeVersion = RuntimeInfo.GetRuntimeVersion();
             if (runtimeVersion == null)

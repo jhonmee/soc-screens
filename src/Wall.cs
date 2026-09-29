@@ -98,7 +98,7 @@ namespace MuroSoc
                     {
                         try
                         {
-                            tab.TickRefresh(now);
+                            tab.Tick(now);
                         }
                         catch (Exception ex)
                         {

@@ -24,6 +24,22 @@ namespace MuroSoc
         private bool scriptDialogOpen;
         private string pauseReason;
         private string pickerMode;
+        private bool closed;
+        private bool recovering;
+        private Rectangle lastBounds;
+        private bool wantVisible;
+        private string lastKnownUrl;
+        private string lastKnownTitle;
+        private string attemptedUrl;
+        private bool navigating;
+        private DateTime navigationStartedAt = DateTime.MinValue;
+        private string errorReason;
+        private bool errorRetryable;
+        private int retryAttempt;
+        private DateTime retryAt = DateTime.MinValue;
+        private DateTime nextWatchdogAt = DateTime.MinValue;
+        private bool watchdogRunning;
+        private int watchdogFailures;
 
         private BrowserTab(ITabHost host, CoreWebView2Controller controller, TabModel settings, BrowserTab opener, bool isPopup)
         {
@@ -50,9 +66,27 @@ namespace MuroSoc
 
         public bool IsAtLogin { get; private set; }
 
-        public string ErrorText { get; private set; }
+        public string ErrorText
+        {
+            get
+            {
+                if (errorReason == null)
+                {
+                    return null;
+                }
+                if (!errorRetryable)
+                {
+                    return errorReason;
+                }
+                int seconds = Math.Max(0, (int)Math.Ceiling((retryAt - DateTime.UtcNow).TotalSeconds));
+                return errorReason + " · reintento en " + FormatSpan(seconds);
+            }
+        }
 
-        public bool IsRecovering { get; private set; }
+        public bool IsRecovering
+        {
+            get { return recovering; }
+        }
 
         public bool IsHovered { get; private set; }
 
@@ -111,17 +145,45 @@ namespace MuroSoc
 
         public bool IsClosed
         {
-            get { return controller == null; }
+            get { return closed; }
         }
 
         public string Url
         {
-            get { return Core == null ? Settings.Url : Core.Source; }
+            get
+            {
+                CoreWebView2 core = Core;
+                if (core != null)
+                {
+                    try
+                    {
+                        return core.Source;
+                    }
+                    catch (Exception)
+                    {
+                    }
+                }
+                return lastKnownUrl ?? Settings.Url;
+            }
         }
 
         public string Title
         {
-            get { return Core == null ? Settings.Title : Core.DocumentTitle; }
+            get
+            {
+                CoreWebView2 core = Core;
+                if (core != null)
+                {
+                    try
+                    {
+                        return core.DocumentTitle;
+                    }
+                    catch (Exception)
+                    {
+                    }
+                }
+                return lastKnownTitle ?? Settings.Title;
+            }
         }
 
         public string DisplayTitle
@@ -201,7 +263,28 @@ namespace MuroSoc
             Wall.MarkDirty();
         }
 
-        public void TickRefresh(DateTime now)
+        public void Tick(DateTime now)
+        {
+            if (closed || recovering)
+            {
+                return;
+            }
+            if (errorReason != null && errorRetryable && now >= retryAt)
+            {
+                RetryNavigation();
+            }
+            if (now >= nextWatchdogAt && !watchdogRunning && !scriptDialogOpen && controller != null)
+            {
+                bool longNavigation = navigating && (now - navigationStartedAt).TotalSeconds < 60;
+                if (!longNavigation)
+                {
+                    RunWatchdog();
+                }
+            }
+            TickRefresh(now);
+        }
+
+        private void TickRefresh(DateTime now)
         {
             if (Settings.AutoRefreshSeconds <= 0 || IsClosed || IsPopup)
             {
@@ -271,16 +354,35 @@ namespace MuroSoc
             host = newHost;
             if (controller != null)
             {
-                controller.ParentWindow = newHost.ContentHost.Handle;
-                controller.NotifyParentWindowPositionChanged();
+                try
+                {
+                    controller.ParentWindow = newHost.ContentHost.Handle;
+                    controller.NotifyParentWindowPositionChanged();
+                }
+                catch (Exception ex)
+                {
+                    Log.Error("No se pudo mover el controlador de la pestaña", ex);
+                }
             }
         }
 
         public void SetVisible(bool visible)
         {
-            if (controller != null && controller.IsVisible != visible)
+            wantVisible = visible;
+            if (controller == null)
             {
-                controller.IsVisible = visible;
+                return;
+            }
+            try
+            {
+                if (controller.IsVisible != visible)
+                {
+                    controller.IsVisible = visible;
+                }
+            }
+            catch (Exception ex)
+            {
+                Log.Error("No se pudo cambiar la visibilidad de la pestaña", ex);
             }
         }
 
@@ -288,7 +390,13 @@ namespace MuroSoc
         {
             if (controller != null)
             {
-                controller.MoveFocus(CoreWebView2MoveFocusReason.Programmatic);
+                try
+                {
+                    controller.MoveFocus(CoreWebView2MoveFocusReason.Programmatic);
+                }
+                catch (Exception)
+                {
+                }
             }
         }
 
@@ -310,9 +418,24 @@ namespace MuroSoc
 
         public void Reload()
         {
-            if (Core != null)
+            if (Core == null)
             {
-                Core.Reload();
+                return;
+            }
+            try
+            {
+                if (errorReason != null && !string.IsNullOrEmpty(attemptedUrl))
+                {
+                    Core.Navigate(attemptedUrl);
+                }
+                else
+                {
+                    Core.Reload();
+                }
+            }
+            catch (Exception ex)
+            {
+                Log.Error("No se pudo recargar la pestaña", ex);
             }
         }
 
@@ -334,18 +457,34 @@ namespace MuroSoc
 
         public void SetBounds(Rectangle bounds)
         {
-            if (controller != null)
+            lastBounds = bounds;
+            if (controller == null)
+            {
+                return;
+            }
+            try
             {
                 controller.Bounds = bounds;
                 ApplyVirtualWidth();
+            }
+            catch (Exception ex)
+            {
+                Log.Error("No se pudo ajustar el tamaño de la pestaña", ex);
             }
         }
 
         public void NotifyPositionChanged()
         {
-            if (controller != null)
+            if (controller == null)
+            {
+                return;
+            }
+            try
             {
                 controller.NotifyParentWindowPositionChanged();
+            }
+            catch (Exception)
+            {
             }
         }
 
@@ -401,13 +540,18 @@ namespace MuroSoc
 
         public void Close()
         {
-            if (controller == null)
+            if (closed)
             {
                 return;
             }
+            closed = true;
             App.UnregisterTab(this);
             CoreWebView2Controller closing = controller;
             controller = null;
+            if (closing == null)
+            {
+                return;
+            }
             try
             {
                 closing.Close();
@@ -446,10 +590,268 @@ namespace MuroSoc
             core.FaviconChanged += OnFaviconChanged;
             core.WebMessageReceived += OnWebMessageReceived;
             core.ScriptDialogOpening += OnScriptDialogOpening;
+            core.ProcessFailed += OnProcessFailed;
+            core.NavigationCompleted += OnNavigationCompleted;
             core.HistoryChanged += delegate { RaiseStateChanged(); };
-            core.DocumentTitleChanged += delegate { RaiseStateChanged(); };
-            core.SourceChanged += delegate { UpdateLoginState(); RaiseStateChanged(); };
-            core.NavigationCompleted += delegate { UpdateLoginState(); RaiseStateChanged(); };
+            core.DocumentTitleChanged += delegate
+            {
+                lastKnownTitle = Title;
+                RaiseStateChanged();
+            };
+            core.SourceChanged += delegate
+            {
+                string source = Url;
+                if (!string.IsNullOrEmpty(source) && source != "about:blank")
+                {
+                    lastKnownUrl = source;
+                }
+                UpdateLoginState();
+                RaiseStateChanged();
+            };
+        }
+
+        private void OnNavigationCompleted(object sender, CoreWebView2NavigationCompletedEventArgs e)
+        {
+            navigating = false;
+            if (e.IsSuccess)
+            {
+                if (errorReason != null)
+                {
+                    Log.Info("Pestaña recuperada tras error de red: " + Log.SafeUrl(Url));
+                }
+                errorReason = null;
+                errorRetryable = false;
+                retryAttempt = 0;
+                watchdogFailures = 0;
+            }
+            else
+            {
+                ClassifyError(e.WebErrorStatus);
+            }
+            UpdateLoginState();
+            RaiseStateChanged();
+        }
+
+        private void ClassifyError(CoreWebView2WebErrorStatus status)
+        {
+            string reason = null;
+            bool retry = true;
+            switch (status)
+            {
+                case CoreWebView2WebErrorStatus.Disconnected:
+                    reason = "sin red";
+                    break;
+                case CoreWebView2WebErrorStatus.HostNameNotResolved:
+                    reason = "no se resuelve el nombre (DNS)";
+                    break;
+                case CoreWebView2WebErrorStatus.CannotConnect:
+                case CoreWebView2WebErrorStatus.ServerUnreachable:
+                    reason = "no se puede conectar al servidor";
+                    break;
+                case CoreWebView2WebErrorStatus.Timeout:
+                    reason = "tiempo de espera agotado";
+                    break;
+                case CoreWebView2WebErrorStatus.ConnectionAborted:
+                case CoreWebView2WebErrorStatus.ConnectionReset:
+                    reason = "la conexión se cortó";
+                    break;
+                case CoreWebView2WebErrorStatus.ErrorHttpInvalidServerResponse:
+                    reason = "respuesta inválida del servidor";
+                    break;
+                case CoreWebView2WebErrorStatus.CertificateCommonNameIsIncorrect:
+                case CoreWebView2WebErrorStatus.CertificateExpired:
+                case CoreWebView2WebErrorStatus.ClientCertificateContainsErrors:
+                case CoreWebView2WebErrorStatus.CertificateRevoked:
+                case CoreWebView2WebErrorStatus.CertificateIsInvalid:
+                    reason = "certificado no válido";
+                    retry = false;
+                    break;
+            }
+            if (reason == null)
+            {
+                return;
+            }
+            errorRetryable = retry;
+            if (!retry)
+            {
+                errorReason = "Error: " + reason;
+                Log.Warn("Error de certificado en " + Log.SafeUrl(attemptedUrl));
+                return;
+            }
+            int[] delays = new int[] { 10, 30, 60, 300 };
+            int delay = delays[Math.Min(retryAttempt, delays.Length - 1)];
+            retryAttempt++;
+            errorReason = "Sin conexión: " + reason;
+            retryAt = DateTime.UtcNow.AddSeconds(delay);
+            Log.Warn("Error de red (" + status + ") en " + Log.SafeUrl(attemptedUrl) + "; reintento " + retryAttempt + " en " + delay + " s");
+        }
+
+        private void RetryNavigation()
+        {
+            retryAt = DateTime.UtcNow.AddSeconds(300);
+            string url = !string.IsNullOrEmpty(attemptedUrl) ? attemptedUrl : Url;
+            if (Core == null || string.IsNullOrEmpty(url))
+            {
+                return;
+            }
+            try
+            {
+                Core.Navigate(url);
+            }
+            catch (Exception ex)
+            {
+                Log.Error("No se pudo reintentar la navegación", ex);
+            }
+        }
+
+        private async void RunWatchdog()
+        {
+            watchdogRunning = true;
+            nextWatchdogAt = DateTime.UtcNow.AddSeconds(30);
+            try
+            {
+                CoreWebView2 core = Core;
+                if (core == null)
+                {
+                    return;
+                }
+                Task<string> probe = core.ExecuteScriptAsync("1");
+                Task finished = await Task.WhenAny(probe, Task.Delay(30000));
+                if (closed || recovering || core != Core)
+                {
+                    return;
+                }
+                if (finished == probe && !probe.IsFaulted)
+                {
+                    watchdogFailures = 0;
+                    return;
+                }
+                if (scriptDialogOpen)
+                {
+                    return;
+                }
+                watchdogFailures++;
+                Log.Warn("La pestaña no responde (" + watchdogFailures + "): " + Log.SafeUrl(Url));
+                if (watchdogFailures == 1)
+                {
+                    Reload();
+                }
+                else
+                {
+                    Recover("la página no responde");
+                }
+            }
+            catch (Exception ex)
+            {
+                Log.Error("Fallo el watchdog de la pestaña", ex);
+            }
+            finally
+            {
+                watchdogRunning = false;
+                nextWatchdogAt = DateTime.UtcNow.AddSeconds(30);
+            }
+        }
+
+        private void OnProcessFailed(object sender, CoreWebView2ProcessFailedEventArgs e)
+        {
+            CoreWebView2ProcessFailedKind kind = e.ProcessFailedKind;
+            switch (kind)
+            {
+                case CoreWebView2ProcessFailedKind.BrowserProcessExited:
+                    Log.Warn("Se cerró el proceso del navegador (" + e.ExitCode + "); recreando pestaña");
+                    BrowserEnvironment.Reset(BrowserEnvironment.Current);
+                    Recover("se cerró el proceso del navegador");
+                    break;
+                case CoreWebView2ProcessFailedKind.RenderProcessExited:
+                    Log.Warn("Se cerró el proceso de la página (" + e.ExitCode + "); recreando pestaña");
+                    Recover("se cerró el proceso de la página");
+                    break;
+                case CoreWebView2ProcessFailedKind.RenderProcessUnresponsive:
+                    Log.Warn("La página no responde; recreando pestaña");
+                    Recover("la página no responde");
+                    break;
+                default:
+                    Log.Warn("Proceso de WebView2 terminado: " + kind + " (" + e.ExitCode + ")");
+                    break;
+            }
+        }
+
+        private async void Recover(string reason)
+        {
+            if (recovering || closed)
+            {
+                return;
+            }
+            recovering = true;
+            string url = lastNonLoginUrl ?? lastKnownUrl ?? Settings.Url;
+            host.OnTabStateChanged(this);
+            CoreWebView2Controller old = controller;
+            controller = null;
+            scriptId = null;
+            if (old != null)
+            {
+                try
+                {
+                    old.Close();
+                }
+                catch (Exception)
+                {
+                }
+            }
+            for (int attempt = 0; !closed; attempt++)
+            {
+                try
+                {
+                    await Task.Delay(attempt == 0 ? 1000 : Math.Min(30000, 3000 * attempt));
+                    if (closed)
+                    {
+                        return;
+                    }
+                    CoreWebView2Controller created = await BrowserEnvironment.CreateControllerAsync(host.ContentHost.Handle, ProfileName);
+                    if (closed)
+                    {
+                        created.Close();
+                        return;
+                    }
+                    controller = created;
+                    Attach();
+                    await RegisterScriptAsync();
+                    created.Bounds = lastBounds;
+                    created.IsVisible = wantVisible;
+                    ApplyVirtualWidth();
+                    errorReason = null;
+                    watchdogFailures = 0;
+                    nextWatchdogAt = DateTime.UtcNow.AddSeconds(60);
+                    Log.Info("Pestaña recreada (" + reason + "): " + Log.SafeUrl(url));
+                    Navigate(string.IsNullOrEmpty(url) ? App.Config.HomeUrl : url);
+                    break;
+                }
+                catch (Exception ex)
+                {
+                    Log.Error("No se pudo recrear la pestaña (intento " + (attempt + 1) + ")", ex);
+                    if (controller != null)
+                    {
+                        CoreWebView2Controller failed = controller;
+                        controller = null;
+                        try
+                        {
+                            failed.Close();
+                        }
+                        catch (Exception)
+                        {
+                        }
+                    }
+                    if (attempt == 2)
+                    {
+                        BrowserEnvironment.Reset(BrowserEnvironment.Current);
+                    }
+                }
+            }
+            recovering = false;
+            if (!closed)
+            {
+                host.OnTabStateChanged(this);
+            }
         }
 
         private async Task RegisterScriptAsync()
@@ -904,6 +1306,9 @@ namespace MuroSoc
         {
             if (SecurityPolicy.IsNavigationAllowed(App.Config, e.Uri))
             {
+                navigating = true;
+                navigationStartedAt = DateTime.UtcNow;
+                attemptedUrl = e.Uri;
                 return;
             }
             e.Cancel = true;
@@ -1003,7 +1408,7 @@ namespace MuroSoc
 
         private void RaiseStateChanged()
         {
-            if (controller != null)
+            if (!closed)
             {
                 host.OnTabStateChanged(this);
             }
