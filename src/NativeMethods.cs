@@ -11,5 +11,21 @@ namespace MuroSoc
 
         [DllImport("user32.dll")]
         public static extern uint GetDpiForSystem();
+
+        [DllImport("user32.dll")]
+        public static extern IntPtr WindowFromPoint(POINT point);
+
+        [StructLayout(LayoutKind.Sequential)]
+        public struct POINT
+        {
+            public int X;
+            public int Y;
+
+            public POINT(int x, int y)
+            {
+                X = x;
+                Y = y;
+            }
+        }
     }
 }

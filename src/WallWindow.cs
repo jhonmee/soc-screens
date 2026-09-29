@@ -1,159 +1,104 @@
 // MuroSOC - WallWindow
 using System;
 using System.Drawing;
-using System.Threading.Tasks;
 using System.Windows.Forms;
 
 namespace MuroSoc
 {
-    internal sealed class WallWindow : Form, ITabHost
+    internal sealed class WallWindow : Form
     {
-        private static readonly Color LoginColor = Color.FromArgb(255, 140, 0);
+        private readonly LayoutPanel panel;
+        private Screen screen;
+        private bool? appliedFullscreen;
 
-        private readonly string startUrl;
-        private readonly Panel frame;
-        private readonly Panel host;
-        private readonly NoticeBar notices;
-        private readonly Label status;
-        private BrowserTab tab;
-
-        public WallWindow(string startUrl)
+        public WallWindow(Screen screen)
         {
-            this.startUrl = startUrl;
-            Text = "Muro SOC " + RuntimeInfo.AppVersion;
+            this.screen = screen;
+            Text = "Muro SOC";
             BackColor = Color.Black;
-            StartPosition = FormStartPosition.CenterScreen;
-            Size = new Size(1280, 800);
+            StartPosition = FormStartPosition.Manual;
+            KeyPreview = true;
+            ShowIcon = true;
 
-            frame = new Panel();
-            frame.Dock = DockStyle.Fill;
-            frame.BackColor = Color.Black;
+            panel = new LayoutPanel();
+            Controls.Add(panel);
 
-            host = new Panel();
-            host.Dock = DockStyle.Fill;
-            host.BackColor = Color.Black;
-            host.Resize += delegate { UpdateBrowserBounds(); };
+            Move += delegate { NotifyPositionChanged(); };
+            ApplyWindowMode();
+        }
 
-            status = new Label();
-            status.Dock = DockStyle.Bottom;
-            status.Height = Dpi.Scale(this, 22);
-            status.TextAlign = ContentAlignment.MiddleLeft;
-            status.ForeColor = Color.Black;
-            status.Visible = false;
+        public Screen Screen
+        {
+            get { return screen; }
+        }
 
-            frame.Controls.Add(host);
-            frame.Controls.Add(status);
+        public string DeviceName
+        {
+            get { return screen.DeviceName; }
+        }
 
-            notices = new NoticeBar();
+        public LayoutPanel Panel
+        {
+            get { return panel; }
+        }
 
-            Controls.Add(frame);
-            Controls.Add(notices);
-
-            Move += delegate
+        public void ApplyWindowMode()
+        {
+            bool fullscreen = App.Config.Fullscreen;
+            if (appliedFullscreen.HasValue && appliedFullscreen.Value == fullscreen)
             {
-                if (tab != null)
-                {
-                    tab.NotifyPositionChanged();
-                }
-            };
-
-            App.ConfigReloaded += OnConfigReloaded;
-        }
-
-        public Control ContentHost
-        {
-            get { return host; }
-        }
-
-        public Task<BrowserTab> OpenScriptTabAsync(BrowserTab opener)
-        {
-            return PopupWindow.OpenAsync(opener, null);
-        }
-
-        public void CloseScriptTab(BrowserTab closing)
-        {
-        }
-
-        public void OnTabStateChanged(BrowserTab changed)
-        {
-            Text = changed.Title + " - Muro SOC";
-            if (changed.IsAtLogin)
+                return;
+            }
+            appliedFullscreen = fullscreen;
+            if (fullscreen)
             {
-                frame.Padding = new Padding(Dpi.Scale(this, 3));
-                frame.BackColor = LoginColor;
-                status.BackColor = LoginColor;
-                status.Text = "  Requiere login";
-                status.Visible = true;
+                FormBorderStyle = FormBorderStyle.None;
+                WindowState = FormWindowState.Normal;
+                Bounds = screen.Bounds;
             }
             else
             {
-                frame.Padding = Padding.Empty;
-                frame.BackColor = Color.Black;
-                status.Visible = false;
+                FormBorderStyle = FormBorderStyle.Sizable;
+                Rectangle area = screen.WorkingArea;
+                int insetX = area.Width / 12;
+                int insetY = area.Height / 12;
+                Bounds = new Rectangle(area.Left + insetX, area.Top + insetY, area.Width - insetX * 2, area.Height - insetY * 2);
+            }
+            NotifyPositionChanged();
+        }
+
+        public void UpdateTitle(string layoutName)
+        {
+            string monitor = screen.DeviceName.Replace(@"\\.\", string.Empty);
+            Text = "Muro SOC - " + (string.IsNullOrEmpty(layoutName) ? "Sin layout" : layoutName) + " - " + monitor;
+        }
+
+        public void NotifyPositionChanged()
+        {
+            foreach (Cell cell in panel.Cells)
+            {
+                cell.NotifyPositionChanged();
             }
         }
 
-        public void ShowNotice(BrowserTab source, NoticeEventArgs notice)
+        protected override bool ProcessCmdKey(ref Message msg, Keys keyData)
         {
-            notices.ShowNotice(notice);
+            if (Wall.TryHandleKey(keyData))
+            {
+                return true;
+            }
+            return base.ProcessCmdKey(ref msg, keyData);
         }
 
-        public void FocusHost()
+        protected override void OnFormClosing(FormClosingEventArgs e)
         {
-            Activate();
-        }
-
-        protected override async void OnShown(EventArgs e)
-        {
-            base.OnShown(e);
-            try
+            if (!Wall.AllowClose && e.CloseReason == CloseReason.UserClosing)
             {
-                tab = await BrowserTab.CreateAsync(this, BrowserEnvironment.DefaultProfile);
-                UpdateBrowserBounds();
-                tab.SetVisible(true);
-                tab.Navigate(startUrl);
+                e.Cancel = true;
+                BeginInvoke((MethodInvoker)delegate { Wall.RequestExit(this); });
+                return;
             }
-            catch (Exception ex)
-            {
-                Log.Error("No se pudo iniciar WebView2", ex);
-                MessageBox.Show(this, "No se pudo iniciar WebView2.\r\n\r\n" + ex.Message, "Muro SOC", MessageBoxButtons.OK, MessageBoxIcon.Error);
-                Close();
-            }
-        }
-
-        protected override void OnFormClosed(FormClosedEventArgs e)
-        {
-            App.ConfigReloaded -= OnConfigReloaded;
-            if (tab != null)
-            {
-                tab.Close();
-                tab = null;
-            }
-            base.OnFormClosed(e);
-        }
-
-        private void OnConfigReloaded(object sender, ConfigReloadedEventArgs e)
-        {
-            if (e.Error == null)
-            {
-                notices.ShowNotice(new NoticeEventArgs(NoticeLevel.Info, "Configuración actualizada."));
-                if (tab != null)
-                {
-                    tab.UpdateLoginState();
-                }
-            }
-            else
-            {
-                notices.ShowNotice(new NoticeEventArgs(NoticeLevel.Error, "config.json tiene un error y no se aplicó: " + e.Error));
-            }
-        }
-
-        private void UpdateBrowserBounds()
-        {
-            if (tab != null)
-            {
-                tab.SetBounds(host.ClientRectangle);
-            }
+            base.OnFormClosing(e);
         }
     }
 }

@@ -1,5 +1,6 @@
 // MuroSOC - PopupWindow
 using System;
+using System.Collections.Generic;
 using System.Drawing;
 using System.Threading.Tasks;
 using System.Windows.Forms;
@@ -70,7 +71,9 @@ namespace MuroSoc
             window.Show(owner);
             try
             {
-                window.tab = await BrowserTab.CreateAsync(window, opener.ProfileName, opener, true);
+                TabModel model = new TabModel();
+                model.Profile = opener.ProfileName;
+                window.tab = await BrowserTab.CreateAsync(window, model, opener, true);
                 window.UpdateBrowserBounds();
                 window.tab.SetVisible(true);
                 window.tab.Focus();
@@ -108,6 +111,19 @@ namespace MuroSoc
         public void FocusHost()
         {
             Activate();
+        }
+
+        public void OnTabFocused(BrowserTab focused)
+        {
+        }
+
+        public List<MenuEntry> BuildMenu(BrowserTab source)
+        {
+            List<MenuEntry> menu = new List<MenuEntry>();
+            string url = source.Url;
+            menu.Add(MenuEntry.Item("Abrir esta página en Edge", delegate { ExternalBrowser.OpenInEdge(url); }));
+            menu.Add(MenuEntry.Item("Cerrar ventana", delegate { Close(); }));
+            return menu;
         }
 
         protected override void OnFormClosed(FormClosedEventArgs e)

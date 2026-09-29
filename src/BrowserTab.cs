@@ -1,5 +1,6 @@
 // MuroSOC - BrowserTab
 using System;
+using System.Collections.Generic;
 using System.Drawing;
 using System.IO;
 using System.Threading.Tasks;
@@ -12,15 +13,20 @@ namespace MuroSoc
     {
         private ITabHost host;
         private CoreWebView2Controller controller;
+        private Image favicon;
+        private bool applyingZoom;
 
-        private BrowserTab(ITabHost host, CoreWebView2Controller controller, string profileName, BrowserTab opener, bool isPopup)
+        private BrowserTab(ITabHost host, CoreWebView2Controller controller, TabModel settings, BrowserTab opener, bool isPopup)
         {
             this.host = host;
             this.controller = controller;
-            ProfileName = profileName;
+            Settings = settings;
+            ProfileName = settings.Profile;
             Opener = opener;
             IsPopup = isPopup;
         }
+
+        public TabModel Settings { get; private set; }
 
         public string ProfileName { get; private set; }
 
@@ -34,6 +40,20 @@ namespace MuroSoc
         }
 
         public bool IsAtLogin { get; private set; }
+
+        public string ErrorText { get; private set; }
+
+        public bool IsRecovering { get; private set; }
+
+        public string RefreshCountdownText
+        {
+            get { return null; }
+        }
+
+        public string RefreshStatusText
+        {
+            get { return null; }
+        }
 
         public ITabHost Host
         {
@@ -57,27 +77,69 @@ namespace MuroSoc
 
         public string Url
         {
-            get { return Core == null ? string.Empty : Core.Source; }
+            get { return Core == null ? Settings.Url : Core.Source; }
         }
 
         public string Title
         {
-            get { return Core == null ? string.Empty : Core.DocumentTitle; }
+            get { return Core == null ? Settings.Title : Core.DocumentTitle; }
         }
 
-        public static Task<BrowserTab> CreateAsync(ITabHost host, string profileName)
+        public string DisplayTitle
         {
-            return CreateAsync(host, profileName, null, false);
+            get
+            {
+                string title = Title;
+                if (!string.IsNullOrEmpty(title))
+                {
+                    return title;
+                }
+                string host = DomainMatcher.HostOf(Url);
+                return host.Length > 0 ? host : "Pestaña nueva";
+            }
         }
 
-        public static async Task<BrowserTab> CreateAsync(ITabHost host, string profileName, BrowserTab opener, bool isPopup)
+        public Image Favicon
         {
-            string profile = AppConfig.IsValidProfileName(profileName) ? profileName : BrowserEnvironment.DefaultProfile;
-            CoreWebView2Controller created = await BrowserEnvironment.CreateControllerAsync(host.ContentHost.Handle, profile);
-            BrowserTab tab = new BrowserTab(host, created, profile, opener, isPopup);
+            get { return favicon; }
+        }
+
+        public bool CanGoBack
+        {
+            get { return Core != null && Core.CanGoBack; }
+        }
+
+        public bool CanGoForward
+        {
+            get { return Core != null && Core.CanGoForward; }
+        }
+
+        public static async Task<BrowserTab> CreateAsync(ITabHost host, TabModel settings, BrowserTab opener, bool isPopup)
+        {
+            TabModel model = settings == null ? new TabModel() : settings.Clone();
+            model.Normalize();
+            CoreWebView2Controller created = await BrowserEnvironment.CreateControllerAsync(host.ContentHost.Handle, model.Profile);
+            BrowserTab tab = new BrowserTab(host, created, model, opener, isPopup);
             tab.Attach();
             App.RegisterTab(tab);
             return tab;
+        }
+
+        public TabModel Snapshot()
+        {
+            TabModel model = Settings.Clone();
+            string url = Url;
+            if (!string.IsNullOrEmpty(url))
+            {
+                model.Url = url;
+            }
+            model.Title = Title ?? string.Empty;
+            model.Profile = ProfileName;
+            if (controller != null && Settings.VirtualWidth == 0)
+            {
+                model.Zoom = controller.ZoomFactor;
+            }
+            return model;
         }
 
         public void MoveTo(ITabHost newHost)
@@ -130,11 +192,28 @@ namespace MuroSoc
             }
         }
 
+        public void GoBack()
+        {
+            if (CanGoBack)
+            {
+                Core.GoBack();
+            }
+        }
+
+        public void GoForward()
+        {
+            if (CanGoForward)
+            {
+                Core.GoForward();
+            }
+        }
+
         public void SetBounds(Rectangle bounds)
         {
             if (controller != null)
             {
                 controller.Bounds = bounds;
+                ApplyVirtualWidth();
             }
         }
 
@@ -144,6 +223,13 @@ namespace MuroSoc
             {
                 controller.NotifyParentWindowPositionChanged();
             }
+        }
+
+        public void SetZoom(double zoom)
+        {
+            Settings.VirtualWidth = 0;
+            Settings.Zoom = Math.Max(0.25, Math.Min(5.0, zoom));
+            ApplyZoom(Settings.Zoom);
         }
 
         public void ApplyConfig(AppConfig config)
@@ -161,45 +247,14 @@ namespace MuroSoc
             settings.IsReputationCheckingRequired = true;
             settings.AreHostObjectsAllowed = false;
             settings.IsBuiltInErrorPageEnabled = true;
+            settings.IsZoomControlEnabled = true;
 
             CoreWebView2Profile profile = Core.Profile;
             profile.PreferredTrackingPreventionLevel = CoreWebView2TrackingPreventionLevel.Basic;
             profile.IsPasswordAutosaveEnabled = false;
             profile.IsGeneralAutofillEnabled = false;
             profile.DefaultDownloadFolderPath = AppPaths.DownloadsFolder;
-        }
-
-        public void Close()
-        {
-            if (controller == null)
-            {
-                return;
-            }
-            App.UnregisterTab(this);
-            CoreWebView2Controller closing = controller;
-            controller = null;
-            closing.Close();
-            if (Opener != null)
-            {
-                Opener = null;
-            }
-        }
-
-        private void Attach()
-        {
-            controller.DefaultBackgroundColor = Color.Black;
-            ApplyConfig(App.Config);
-            CoreWebView2 core = controller.CoreWebView2;
-            core.PermissionRequested += OnPermissionRequested;
-            core.DownloadStarting += OnDownloadStarting;
-            core.NavigationStarting += OnNavigationStarting;
-            core.LaunchingExternalUriScheme += OnLaunchingExternalUriScheme;
-            core.ContextMenuRequested += OnContextMenuRequested;
-            core.NewWindowRequested += OnNewWindowRequested;
-            core.WindowCloseRequested += OnWindowCloseRequested;
-            core.DocumentTitleChanged += delegate { RaiseStateChanged(); };
-            core.SourceChanged += delegate { UpdateLoginState(); RaiseStateChanged(); };
-            core.NavigationCompleted += delegate { UpdateLoginState(); };
+            UpdateLoginState();
         }
 
         public void UpdateLoginState()
@@ -214,54 +269,170 @@ namespace MuroSoc
             RaiseStateChanged();
         }
 
-        private async void OnNewWindowRequested(object sender, CoreWebView2NewWindowRequestedEventArgs e)
+        public void Close()
         {
-            CoreWebView2Deferral deferral = e.GetDeferral();
+            if (controller == null)
+            {
+                return;
+            }
+            App.UnregisterTab(this);
+            CoreWebView2Controller closing = controller;
+            controller = null;
             try
             {
-                CoreWebView2WindowFeatures features = e.WindowFeatures;
-                bool popup = features != null && features.HasSize;
-                BrowserTab created;
-                if (popup && !App.Config.PopupsAsTabs)
-                {
-                    created = await PopupWindow.OpenAsync(this, features);
-                }
-                else
-                {
-                    created = await host.OpenScriptTabAsync(this);
-                }
-                if (created != null && created.Core != null)
-                {
-                    e.NewWindow = created.Core;
-                    e.Handled = true;
-                    Log.Info((popup ? "Popup abierto" : "Pestaña abierta por script") + " hacia " + Log.SafeUrl(e.Uri));
-                }
+                closing.Close();
             }
             catch (Exception ex)
             {
-                Log.Error("No se pudo abrir la ventana solicitada por la página", ex);
+                Log.Error("Error al cerrar el controlador de WebView2", ex);
             }
-            finally
+            if (favicon != null)
             {
-                deferral.Complete();
+                favicon.Dispose();
+                favicon = null;
             }
         }
 
-        private void OnWindowCloseRequested(object sender, object e)
+        private void Attach()
         {
-            if (!OpenedByScript)
+            controller.DefaultBackgroundColor = Color.White;
+            controller.AcceleratorKeyPressed += OnAcceleratorKeyPressed;
+            controller.GotFocus += delegate { host.OnTabFocused(this); };
+            controller.ZoomFactorChanged += OnZoomFactorChanged;
+            ApplyConfig(App.Config);
+            ApplyZoom(Settings.Zoom);
+            CoreWebView2 core = controller.CoreWebView2;
+            core.PermissionRequested += OnPermissionRequested;
+            core.DownloadStarting += OnDownloadStarting;
+            core.NavigationStarting += OnNavigationStarting;
+            core.LaunchingExternalUriScheme += OnLaunchingExternalUriScheme;
+            core.ContextMenuRequested += OnContextMenuRequested;
+            core.NewWindowRequested += OnNewWindowRequested;
+            core.WindowCloseRequested += OnWindowCloseRequested;
+            core.FaviconChanged += OnFaviconChanged;
+            core.HistoryChanged += delegate { RaiseStateChanged(); };
+            core.DocumentTitleChanged += delegate { RaiseStateChanged(); };
+            core.SourceChanged += delegate { UpdateLoginState(); RaiseStateChanged(); };
+            core.NavigationCompleted += delegate { UpdateLoginState(); RaiseStateChanged(); };
+        }
+
+        private void ApplyZoom(double zoom)
+        {
+            if (controller == null)
             {
-                Log.Info("La página pidió cerrar una pestaña principal; se ignora");
                 return;
             }
-            BrowserTab opener = Opener;
-            ITabHost closingHost = host;
-            closingHost.CloseScriptTab(this);
-            if (opener != null && !opener.IsClosed)
+            applyingZoom = true;
+            try
             {
-                opener.host.FocusHost();
-                opener.Focus();
+                if (Math.Abs(controller.ZoomFactor - zoom) > 0.001)
+                {
+                    controller.ZoomFactor = zoom;
+                }
             }
+            finally
+            {
+                applyingZoom = false;
+            }
+        }
+
+        private void ApplyVirtualWidth()
+        {
+            if (controller == null || Settings.VirtualWidth <= 0)
+            {
+                return;
+            }
+            Rectangle bounds = controller.Bounds;
+            if (bounds.Width <= 0)
+            {
+                return;
+            }
+            double scale = controller.RasterizationScale <= 0 ? 1.0 : controller.RasterizationScale;
+            double zoom = bounds.Width / (scale * Settings.VirtualWidth);
+            ApplyZoom(Math.Max(0.25, Math.Min(5.0, zoom)));
+        }
+
+        private void OnZoomFactorChanged(object sender, object e)
+        {
+            if (applyingZoom || controller == null)
+            {
+                return;
+            }
+            Settings.VirtualWidth = 0;
+            Settings.Zoom = controller.ZoomFactor;
+            RaiseStateChanged();
+        }
+
+        private void OnAcceleratorKeyPressed(object sender, CoreWebView2AcceleratorKeyPressedEventArgs e)
+        {
+            if (e.KeyEventKind != CoreWebView2KeyEventKind.KeyDown && e.KeyEventKind != CoreWebView2KeyEventKind.SystemKeyDown)
+            {
+                return;
+            }
+            Keys keys = (Keys)e.VirtualKey | Control.ModifierKeys;
+            if (e.PhysicalKeyStatus.WasKeyDown != 0)
+            {
+                if (Shortcuts.Match(keys) != null || keys == Keys.Escape)
+                {
+                    e.Handled = true;
+                }
+                return;
+            }
+            if (Wall.TryHandleKey(keys))
+            {
+                e.Handled = true;
+            }
+        }
+
+        private async void OnFaviconChanged(object sender, object e)
+        {
+            CoreWebView2 core = Core;
+            if (core == null)
+            {
+                return;
+            }
+            try
+            {
+                if (string.IsNullOrEmpty(core.FaviconUri))
+                {
+                    SetFavicon(null);
+                    return;
+                }
+                using (Stream stream = await core.GetFaviconAsync(CoreWebView2FaviconImageFormat.Png))
+                {
+                    if (stream == null || IsClosed)
+                    {
+                        return;
+                    }
+                    MemoryStream copy = new MemoryStream();
+                    stream.CopyTo(copy);
+                    if (copy.Length == 0)
+                    {
+                        SetFavicon(null);
+                        return;
+                    }
+                    copy.Position = 0;
+                    using (Image image = Image.FromStream(copy))
+                    {
+                        SetFavicon(new Bitmap(image));
+                    }
+                }
+            }
+            catch (Exception)
+            {
+                SetFavicon(null);
+            }
+        }
+
+        private void SetFavicon(Image image)
+        {
+            Image old = favicon;
+            favicon = image;
+            if (old != null)
+            {
+                old.Dispose();
+            }
+            RaiseStateChanged();
         }
 
         private void OnPermissionRequested(object sender, CoreWebView2PermissionRequestedEventArgs e)
@@ -338,34 +509,64 @@ namespace MuroSoc
             {
                 return;
             }
-            string pageUrl = Url;
-            CoreWebView2ContextMenuItem root = environment.CreateContextMenuItem("Muro SOC", null, CoreWebView2ContextMenuItemKind.Submenu);
-            AddCommand(environment, root, "Abrir esta página en Edge", delegate { ExternalBrowser.OpenInEdge(pageUrl); });
-            CoreWebView2ContextMenuItem signOut = environment.CreateContextMenuItem("Cerrar sesión en todo", null, CoreWebView2ContextMenuItemKind.Submenu);
-            foreach (string profile in App.Config.Profiles)
+            List<MenuEntry> entries = host.BuildMenu(this);
+            if (entries == null || entries.Count == 0)
             {
-                string target = profile;
-                string label = profile == ProfileName ? "Perfil " + profile + " (esta pestaña)..." : "Perfil " + profile + "...";
-                AddCommand(environment, signOut, label, delegate { App.SignOutProfile(host.ContentHost.FindForm(), target); });
+                return;
             }
-            root.Children.Add(signOut);
-            AddCommand(environment, root, "Acerca de Muro SOC", delegate { App.ShowAbout(host.ContentHost.FindForm()); });
-            e.MenuItems.Add(environment.CreateContextMenuItem(string.Empty, null, CoreWebView2ContextMenuItemKind.Separator));
-            e.MenuItems.Add(root);
+            List<MenuEntry> root = new List<MenuEntry>();
+            root.Add(MenuEntry.Separator());
+            root.Add(MenuEntry.Sub("Muro SOC", entries));
+            MenuEntry.AddToWebView(environment, e.MenuItems, root, host.ContentHost);
         }
 
-        private void AddCommand(CoreWebView2Environment environment, CoreWebView2ContextMenuItem parent, string label, MethodInvoker action)
+        private async void OnNewWindowRequested(object sender, CoreWebView2NewWindowRequestedEventArgs e)
         {
-            CoreWebView2ContextMenuItem item = environment.CreateContextMenuItem(label, null, CoreWebView2ContextMenuItemKind.Command);
-            item.CustomItemSelected += delegate
+            CoreWebView2Deferral deferral = e.GetDeferral();
+            try
             {
-                Control target = host.ContentHost;
-                if (!target.IsDisposed)
+                CoreWebView2WindowFeatures features = e.WindowFeatures;
+                bool popup = features != null && features.HasSize;
+                BrowserTab created;
+                if (popup && !App.Config.PopupsAsTabs)
                 {
-                    target.BeginInvoke(action);
+                    created = await PopupWindow.OpenAsync(this, features);
                 }
-            };
-            parent.Children.Add(item);
+                else
+                {
+                    created = await host.OpenScriptTabAsync(this);
+                }
+                if (created != null && created.Core != null)
+                {
+                    e.NewWindow = created.Core;
+                    e.Handled = true;
+                    Log.Info((popup ? "Popup abierto" : "Pestaña abierta por script") + " hacia " + Log.SafeUrl(e.Uri));
+                }
+            }
+            catch (Exception ex)
+            {
+                Log.Error("No se pudo abrir la ventana solicitada por la página", ex);
+            }
+            finally
+            {
+                deferral.Complete();
+            }
+        }
+
+        private void OnWindowCloseRequested(object sender, object e)
+        {
+            if (!OpenedByScript)
+            {
+                Log.Info("La página pidió cerrar una pestaña principal; se ignora");
+                return;
+            }
+            BrowserTab opener = Opener;
+            host.CloseScriptTab(this);
+            if (opener != null && !opener.IsClosed)
+            {
+                opener.host.FocusHost();
+                opener.Focus();
+            }
         }
 
         private void RaiseNotice(NoticeEventArgs notice)

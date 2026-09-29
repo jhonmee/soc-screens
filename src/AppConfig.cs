@@ -56,6 +56,12 @@ namespace MuroSoc
         [DataMember(Order = 10)]
         public List<string> LoginUrlPatterns { get; set; }
 
+        [DataMember(Order = 11)]
+        public bool Fullscreen { get; set; }
+
+        [DataMember(Order = 12)]
+        public Dictionary<string, string> KeyBindings { get; set; }
+
         public AppConfig()
         {
             SetDefaults();
@@ -136,6 +142,20 @@ namespace MuroSoc
                 }
             }
             LoginUrlPatterns = patterns;
+
+            Dictionary<string, string> bindings = Shortcuts.Defaults();
+            if (KeyBindings != null)
+            {
+                foreach (KeyValuePair<string, string> pair in KeyBindings)
+                {
+                    System.Windows.Forms.Keys parsed;
+                    if (bindings.ContainsKey(pair.Key) && (string.IsNullOrEmpty(pair.Value) || Shortcuts.TryParse(pair.Value, out parsed)))
+                    {
+                        bindings[pair.Key] = pair.Value ?? string.Empty;
+                    }
+                }
+            }
+            KeyBindings = bindings;
         }
 
         [OnDeserializing]
@@ -157,6 +177,8 @@ namespace MuroSoc
             PermissionRules = new List<PermissionRule>();
             PopupsAsTabs = false;
             LoginUrlPatterns = new List<string>(LoginDetector.DefaultPatterns);
+            Fullscreen = true;
+            KeyBindings = Shortcuts.Defaults();
         }
 
         private static bool ContainsIgnoreCase(List<string> list, string value)
