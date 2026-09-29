@@ -23,6 +23,7 @@ namespace MuroSoc
         private readonly Label status;
         private readonly Panel content;
         private readonly EmptyCellPanel empty;
+        private readonly Label refreshBadge;
         private BrowserTab active;
         private bool dropTarget;
 
@@ -39,6 +40,15 @@ namespace MuroSoc
             empty = new EmptyCellPanel(this);
             empty.Dock = DockStyle.Fill;
             content.Controls.Add(empty);
+
+            refreshBadge = new Label();
+            refreshBadge.AutoSize = true;
+            refreshBadge.BackColor = Color.FromArgb(40, 40, 40);
+            refreshBadge.ForeColor = Color.Gainsboro;
+            refreshBadge.Padding = new Padding(4, 2, 4, 2);
+            refreshBadge.Visible = false;
+            content.Controls.Add(refreshBadge);
+            content.Resize += delegate { PlaceRefreshBadge(); };
 
             status = new Label();
             status.Dock = DockStyle.Bottom;
@@ -223,6 +233,35 @@ namespace MuroSoc
             }
         }
 
+        public void UpdateRefreshBadge()
+        {
+            BrowserTab tab = active;
+            string text = tab == null ? null : tab.RefreshCountdownText;
+            bool show = text != null && (Wall.EditMode || tab.IsHovered);
+            if (show)
+            {
+                if (refreshBadge.Text != text)
+                {
+                    refreshBadge.Text = text;
+                    PlaceRefreshBadge();
+                }
+                if (!refreshBadge.Visible)
+                {
+                    refreshBadge.Visible = true;
+                    PlaceRefreshBadge();
+                }
+                refreshBadge.BringToFront();
+            }
+            else if (refreshBadge.Visible)
+            {
+                refreshBadge.Visible = false;
+            }
+            if (Wall.EditMode || tab != null && tab.IsHovered)
+            {
+                strip.Invalidate();
+            }
+        }
+
         public void FocusAddress()
         {
             address.FocusInput();
@@ -384,8 +423,15 @@ namespace MuroSoc
             return tab;
         }
 
+        private void PlaceRefreshBadge()
+        {
+            int margin = Dpi.Scale(this, 6);
+            refreshBadge.Location = new Point(Math.Max(0, content.ClientSize.Width - refreshBadge.Width - margin), margin);
+        }
+
         private void ApplyScale()
         {
+            refreshBadge.Font = new Font("Segoe UI", Dpi.ScaleF(this, 11f), FontStyle.Regular, GraphicsUnit.Pixel);
             status.Height = Dpi.Scale(this, 22);
             status.Font = new Font("Segoe UI", Dpi.ScaleF(this, 12f), FontStyle.Bold, GraphicsUnit.Pixel);
         }

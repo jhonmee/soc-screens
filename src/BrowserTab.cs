@@ -16,6 +16,13 @@ namespace MuroSoc
         private Image favicon;
         private bool applyingZoom;
         private string lastNonLoginUrl;
+        private string scriptId;
+        private DateTime lastInteraction = DateTime.MinValue;
+        private DateTime nextRefreshAt = DateTime.MinValue;
+        private DateTime autoReloadAt = DateTime.MinValue;
+        private bool refreshCheckRunning;
+        private bool scriptDialogOpen;
+        private string pauseReason;
 
         private BrowserTab(ITabHost host, CoreWebView2Controller controller, TabModel settings, BrowserTab opener, bool isPopup)
         {
@@ -46,14 +53,44 @@ namespace MuroSoc
 
         public bool IsRecovering { get; private set; }
 
+        public bool IsHovered { get; private set; }
+
+        public bool IsScriptDialogOpen
+        {
+            get { return scriptDialogOpen; }
+        }
+
         public string RefreshCountdownText
         {
-            get { return null; }
+            get
+            {
+                if (Settings.AutoRefreshSeconds <= 0 || IsClosed)
+                {
+                    return null;
+                }
+                if (pauseReason != null)
+                {
+                    return "⏸";
+                }
+                return "⟳ " + FormatSpan(SecondsToRefresh());
+            }
         }
 
         public string RefreshStatusText
         {
-            get { return null; }
+            get
+            {
+                if (Settings.AutoRefreshSeconds <= 0)
+                {
+                    return null;
+                }
+                string every = "Autorefresh cada " + FormatInterval(Settings.AutoRefreshSeconds);
+                if (pauseReason != null)
+                {
+                    return every + " · en pausa: " + pauseReason;
+                }
+                return every + " · próximo en " + FormatSpan(SecondsToRefresh());
+            }
         }
 
         public ITabHost Host
@@ -123,7 +160,92 @@ namespace MuroSoc
             BrowserTab tab = new BrowserTab(host, created, model, opener, isPopup);
             tab.Attach();
             App.RegisterTab(tab);
+            try
+            {
+                await tab.RegisterScriptAsync();
+            }
+            catch (Exception ex)
+            {
+                Log.Error("No se pudo registrar el script de la app en la pestaña", ex);
+            }
             return tab;
+        }
+
+        public async void UpdatePageSettings()
+        {
+            Settings.Normalize();
+            try
+            {
+                await RegisterScriptAsync();
+                if (Core != null)
+                {
+                    await Core.ExecuteScriptAsync("window.__muroSoc && window.__muroSoc.apply(" + PageScript.ConfigJson(Settings) + ")");
+                }
+            }
+            catch (Exception ex)
+            {
+                Log.Error("No se pudieron aplicar los ajustes de página", ex);
+            }
+            ApplyVirtualWidth();
+            RaiseStateChanged();
+            Wall.MarkDirty();
+        }
+
+        public void SetAutoRefresh(int seconds)
+        {
+            Settings.AutoRefreshSeconds = seconds <= 0 ? 0 : Math.Max(30, seconds);
+            nextRefreshAt = Settings.AutoRefreshSeconds > 0 ? DateTime.UtcNow.AddSeconds(Settings.AutoRefreshSeconds) : DateTime.MinValue;
+            pauseReason = null;
+            RaiseStateChanged();
+            Wall.MarkDirty();
+        }
+
+        public void TickRefresh(DateTime now)
+        {
+            if (Settings.AutoRefreshSeconds <= 0 || IsClosed || IsPopup)
+            {
+                pauseReason = null;
+                return;
+            }
+            if (nextRefreshAt == DateTime.MinValue)
+            {
+                nextRefreshAt = now.AddSeconds(Settings.AutoRefreshSeconds);
+            }
+            string reason = null;
+            if (IsAtLogin)
+            {
+                reason = "página de login";
+            }
+            else if (ErrorText != null || IsRecovering)
+            {
+                reason = "sin conexión";
+            }
+            else if (scriptDialogOpen)
+            {
+                reason = "diálogo abierto";
+            }
+            else if ((now - lastInteraction).TotalSeconds < 120)
+            {
+                reason = "en uso";
+            }
+            if (reason != null)
+            {
+                pauseReason = reason;
+                if (now >= nextRefreshAt)
+                {
+                    nextRefreshAt = now.AddSeconds(10);
+                }
+                return;
+            }
+            if (pauseReason != null && pauseReason != "texto sin enviar" && pauseReason != "página ocupada" && pauseReason != "cambios sin guardar")
+            {
+                pauseReason = null;
+            }
+            if (now < nextRefreshAt || refreshCheckRunning)
+            {
+                return;
+            }
+            CheckAndRefresh();
         }
 
         public TabModel Snapshot()
@@ -242,7 +364,9 @@ namespace MuroSoc
             CoreWebView2Settings settings = Core.Settings;
             settings.AreDevToolsEnabled = config.DevToolsEnabled;
             settings.AreDefaultContextMenusEnabled = true;
-            settings.AreDefaultScriptDialogsEnabled = true;
+            settings.AreDefaultScriptDialogsEnabled = false;
+            settings.IsWebMessageEnabled = true;
+            settings.IsScriptEnabled = true;
             settings.IsPasswordAutosaveEnabled = false;
             settings.IsGeneralAutofillEnabled = false;
             settings.IsReputationCheckingRequired = true;
@@ -302,7 +426,11 @@ namespace MuroSoc
         {
             controller.DefaultBackgroundColor = Color.White;
             controller.AcceleratorKeyPressed += OnAcceleratorKeyPressed;
-            controller.GotFocus += delegate { host.OnTabFocused(this); };
+            controller.GotFocus += delegate
+            {
+                lastInteraction = DateTime.UtcNow;
+                host.OnTabFocused(this);
+            };
             controller.ZoomFactorChanged += OnZoomFactorChanged;
             ApplyConfig(App.Config);
             ApplyZoom(Settings.Zoom);
@@ -315,10 +443,188 @@ namespace MuroSoc
             core.NewWindowRequested += OnNewWindowRequested;
             core.WindowCloseRequested += OnWindowCloseRequested;
             core.FaviconChanged += OnFaviconChanged;
+            core.WebMessageReceived += OnWebMessageReceived;
+            core.ScriptDialogOpening += OnScriptDialogOpening;
             core.HistoryChanged += delegate { RaiseStateChanged(); };
             core.DocumentTitleChanged += delegate { RaiseStateChanged(); };
             core.SourceChanged += delegate { UpdateLoginState(); RaiseStateChanged(); };
             core.NavigationCompleted += delegate { UpdateLoginState(); RaiseStateChanged(); };
+        }
+
+        private async Task RegisterScriptAsync()
+        {
+            CoreWebView2 core = Core;
+            if (core == null)
+            {
+                return;
+            }
+            if (scriptId != null)
+            {
+                core.RemoveScriptToExecuteOnDocumentCreated(scriptId);
+                scriptId = null;
+            }
+            scriptId = await core.AddScriptToExecuteOnDocumentCreatedAsync(PageScript.Build(Settings));
+        }
+
+        private async void CheckAndRefresh()
+        {
+            refreshCheckRunning = true;
+            try
+            {
+                CoreWebView2 core = Core;
+                if (core == null)
+                {
+                    return;
+                }
+                Task<string> check = core.ExecuteScriptAsync("window.__muroSoc ? window.__muroSoc.busy() : null");
+                Task finished = await Task.WhenAny(check, Task.Delay(5000));
+                DateTime now = DateTime.UtcNow;
+                if (finished != check)
+                {
+                    pauseReason = "página ocupada";
+                    nextRefreshAt = now.AddSeconds(30);
+                    return;
+                }
+                BusyState busy = PageScript.Parse<BusyState>(check.Result);
+                if (busy != null && (busy.Typed || busy.Dialog))
+                {
+                    pauseReason = busy.Typed ? "texto sin enviar" : "diálogo abierto";
+                    nextRefreshAt = now.AddSeconds(30);
+                    return;
+                }
+                if (IsClosed || IsAtLogin || scriptDialogOpen || (now - lastInteraction).TotalSeconds < 120)
+                {
+                    return;
+                }
+                pauseReason = null;
+                autoReloadAt = now;
+                nextRefreshAt = now.AddSeconds(Settings.AutoRefreshSeconds);
+                Core.Reload();
+            }
+            catch (Exception ex)
+            {
+                Log.Error("Fallo el autorefresh", ex);
+                nextRefreshAt = DateTime.UtcNow.AddSeconds(Math.Max(30, Settings.AutoRefreshSeconds));
+            }
+            finally
+            {
+                refreshCheckRunning = false;
+            }
+        }
+
+        private int SecondsToRefresh()
+        {
+            if (nextRefreshAt == DateTime.MinValue)
+            {
+                return Settings.AutoRefreshSeconds;
+            }
+            return Math.Max(0, (int)Math.Ceiling((nextRefreshAt - DateTime.UtcNow).TotalSeconds));
+        }
+
+        private static string FormatSpan(int seconds)
+        {
+            return (seconds / 60) + ":" + (seconds % 60).ToString("00");
+        }
+
+        public static string FormatInterval(int seconds)
+        {
+            if (seconds % 60 == 0)
+            {
+                int minutes = seconds / 60;
+                return minutes == 1 ? "1 minuto" : minutes + " minutos";
+            }
+            return seconds + " s";
+        }
+
+        private void OnWebMessageReceived(object sender, CoreWebView2WebMessageReceivedEventArgs e)
+        {
+            PageMessage message = PageScript.Parse<PageMessage>(e.WebMessageAsJson);
+            if (message == null || message.Type == null)
+            {
+                return;
+            }
+            switch (message.Type)
+            {
+                case "activity":
+                    lastInteraction = DateTime.UtcNow;
+                    break;
+                case "hover":
+                    if (IsHovered != message.Value)
+                    {
+                        IsHovered = message.Value;
+                        RaiseStateChanged();
+                    }
+                    break;
+                default:
+                    HandlePageMessage(message);
+                    break;
+            }
+        }
+
+        private void OnScriptDialogOpening(object sender, CoreWebView2ScriptDialogOpeningEventArgs e)
+        {
+            CoreWebView2Deferral deferral = e.GetDeferral();
+            scriptDialogOpen = true;
+            CoreWebView2ScriptDialogKind kind = e.Kind;
+            string message = e.Message ?? string.Empty;
+            string defaultText = e.DefaultText ?? string.Empty;
+            string origin = DomainMatcher.HostOf(e.Uri);
+            bool automatic = (DateTime.UtcNow - autoReloadAt).TotalSeconds < 10;
+            host.ContentHost.BeginInvoke((MethodInvoker)delegate
+            {
+                try
+                {
+                    IWin32Window owner = host.ContentHost.FindForm();
+                    string title = "Mensaje de " + (origin.Length > 0 ? origin : "la página");
+                    switch (kind)
+                    {
+                        case CoreWebView2ScriptDialogKind.Alert:
+                            MessageBox.Show(owner, message, title, MessageBoxButtons.OK, MessageBoxIcon.Information);
+                            e.Accept();
+                            break;
+                        case CoreWebView2ScriptDialogKind.Confirm:
+                            if (MessageBox.Show(owner, message, title, MessageBoxButtons.OKCancel, MessageBoxIcon.Question) == DialogResult.OK)
+                            {
+                                e.Accept();
+                            }
+                            break;
+                        case CoreWebView2ScriptDialogKind.Prompt:
+                            string text = InputDialog.Prompt(owner, title, message, defaultText, false);
+                            if (text != null)
+                            {
+                                e.ResultText = text;
+                                e.Accept();
+                            }
+                            break;
+                        case CoreWebView2ScriptDialogKind.Beforeunload:
+                            if (automatic)
+                            {
+                                pauseReason = "cambios sin guardar";
+                                Log.Info("Autorefresh cancelado: la página tiene cambios sin guardar");
+                                break;
+                            }
+                            if (MessageBox.Show(owner, "¿Salir de esta página? Los cambios que no guardaste se pueden perder.", title, MessageBoxButtons.YesNo, MessageBoxIcon.Warning, MessageBoxDefaultButton.Button2) == DialogResult.Yes)
+                            {
+                                e.Accept();
+                            }
+                            break;
+                    }
+                }
+                catch (Exception ex)
+                {
+                    Log.Error("Error mostrando un diálogo de la página", ex);
+                }
+                finally
+                {
+                    scriptDialogOpen = false;
+                    lastInteraction = DateTime.UtcNow;
+                    deferral.Complete();
+                }
+            });
+        }
+
+        private void HandlePageMessage(PageMessage message)
+        {
         }
 
         private void ApplyZoom(double zoom)

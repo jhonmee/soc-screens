@@ -14,6 +14,7 @@ namespace MuroSoc
         private static readonly List<TabModel> ClosedTabs = new List<TabModel>();
         private static ApplicationContext context;
         private static Timer autosaveTimer;
+        private static Timer tickTimer;
         private static Cell activeCell;
         private static Cell dragTarget;
         private static bool allowClose;
@@ -71,6 +72,33 @@ namespace MuroSoc
             autosaveTimer.Interval = 60000;
             autosaveTimer.Tick += delegate { SaveState(); };
             autosaveTimer.Start();
+            tickTimer = new Timer();
+            tickTimer.Interval = 1000;
+            tickTimer.Tick += delegate { Tick(); };
+            tickTimer.Start();
+        }
+
+        private static void Tick()
+        {
+            DateTime now = DateTime.UtcNow;
+            foreach (WallWindow window in Windows)
+            {
+                foreach (Cell cell in window.Panel.Cells)
+                {
+                    foreach (BrowserTab tab in cell.Tabs)
+                    {
+                        try
+                        {
+                            tab.TickRefresh(now);
+                        }
+                        catch (Exception ex)
+                        {
+                            Log.Error("Error en el ciclo de la pestaña", ex);
+                        }
+                    }
+                    cell.UpdateRefreshBadge();
+                }
+            }
         }
 
         public static void SaveState()
@@ -955,6 +983,10 @@ namespace MuroSoc
             {
                 autosaveTimer.Stop();
             }
+            if (tickTimer != null)
+            {
+                tickTimer.Stop();
+            }
             Log.Info("Cierre de Muro SOC");
             foreach (WallWindow window in new List<WallWindow>(Windows))
             {
@@ -1066,6 +1098,8 @@ namespace MuroSoc
                 string url = tab.Url;
                 menu.Add(MenuEntry.Item("Abrir esta página en Edge", delegate { ExternalBrowser.OpenInEdge(url); }));
                 menu.Add(MenuEntry.Item("Abrir URL en esta pestaña...", delegate { PromptUrl(cell); }));
+                menu.Add(MenuEntry.Separator());
+                menu.AddRange(TabMenu.Build(cell, tab));
             }
             menu.Add(MenuEntry.Separator());
 
