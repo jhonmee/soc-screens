@@ -22,6 +22,11 @@ namespace MuroSoc
         private static DateTime lastCursorMove = DateTime.UtcNow;
         private static bool cursorHidden;
 
+        public static bool IsCursorHidden
+        {
+            get { return cursorHidden; }
+        }
+
         public static bool UiVisible { get; private set; }
 
         public static bool IsLocked { get; private set; }
@@ -224,9 +229,7 @@ namespace MuroSoc
             {
                 return;
             }
-            TabModel model = new TabModel();
-            model.Url = url;
-            model.Profile = cell.ProfileName;
+            TabModel model = App.Config.NewTabModel(url, cell.ProfileName);
             try
             {
                 await cell.CreateTabAsync(model, true);
@@ -678,6 +681,7 @@ namespace MuroSoc
             {
                 window.ApplyWindowMode();
             }
+            RefreshChrome();
         }
 
         public static void ToggleMaximize()
@@ -703,6 +707,131 @@ namespace MuroSoc
                 }
             }
             return restored;
+        }
+
+        public static void OpenTemplates()
+        {
+            Cell cell = ActiveCell ?? FirstCell();
+            WallWindow window = cell == null ? MainWindow : cell.Window;
+            if (window == null)
+            {
+                return;
+            }
+            using (TemplateDialog dialog = new TemplateDialog(window))
+            {
+                dialog.ShowDialog(window);
+            }
+        }
+
+        public static void OpenGlobalSettings()
+        {
+            Cell cell = ActiveCell ?? FirstCell();
+            using (GlobalSettingsDialog dialog = new GlobalSettingsDialog(cell))
+            {
+                dialog.ShowDialog(OwnerWindow());
+            }
+            RefreshChrome();
+        }
+
+        public static List<string> PreviewLabels(WallWindow window, PaneModel shape)
+        {
+            List<PaneModel> targets = new List<PaneModel>();
+            shape.CollectCells(targets);
+            List<string> labels = new List<string>();
+            foreach (List<BrowserTab> group in LayoutTemplates.Distribute(TabGroups(window), targets.Count))
+            {
+                string label = group[0].DisplayTitle;
+                if (label.Length > 28)
+                {
+                    label = label.Substring(0, 27) + "…";
+                }
+                if (group.Count > 1)
+                {
+                    label += " (+" + (group.Count - 1) + ")";
+                }
+                labels.Add(label);
+            }
+            return labels;
+        }
+
+        public static void ApplyTemplate(WallWindow window, PaneModel shape, string name)
+        {
+            if (window == null || window.IsDisposed)
+            {
+                return;
+            }
+            window.Panel.SetMaximized(null);
+            List<Cell> oldCells = window.Panel.Cells;
+            Dictionary<BrowserTab, bool> wasActive = new Dictionary<BrowserTab, bool>();
+            string fallbackProfile = oldCells.Count > 0 ? oldCells[0].ProfileName : BrowserEnvironment.DefaultProfile;
+            foreach (Cell cell in oldCells)
+            {
+                if (cell.ActiveTab != null)
+                {
+                    wasActive[cell.ActiveTab] = true;
+                }
+            }
+
+            PaneModel copy = PaneModelCopy(shape);
+            List<KeyValuePair<Cell, PaneModel>> created = new List<KeyValuePair<Cell, PaneModel>>();
+            PaneNode root = BuildNode(copy, created);
+            List<List<BrowserTab>> groups = LayoutTemplates.Distribute(TabGroups(window), created.Count);
+            for (int i = 0; i < created.Count; i++)
+            {
+                created[i].Key.ProfileName = i < groups.Count ? groups[i][0].ProfileName : fallbackProfile;
+            }
+
+            List<Control> old = window.Panel.SwapRoot(root);
+            for (int i = 0; i < groups.Count && i < created.Count; i++)
+            {
+                Cell target = created[i].Key;
+                BrowserTab activeInGroup = null;
+                foreach (BrowserTab tab in groups[i])
+                {
+                    MoveTab(tab, target, target.Tabs.Count, false);
+                    if (wasActive.ContainsKey(tab) && activeInGroup == null)
+                    {
+                        activeInGroup = tab;
+                    }
+                }
+                target.Activate(activeInGroup ?? groups[i][0]);
+            }
+            if (activeCell != null && oldCells.Contains(activeCell))
+            {
+                activeCell = null;
+            }
+            window.Panel.RemoveControls(old);
+            if (created.Count > 0)
+            {
+                SetActiveCell(created[0].Key);
+            }
+            RefreshChrome();
+            IsDirty = true;
+            Log.Info("Plantilla aplicada: " + name + " en " + MonitorMapper.ShortName(window.DeviceName));
+        }
+
+        private static List<List<BrowserTab>> TabGroups(WallWindow window)
+        {
+            List<List<BrowserTab>> groups = new List<List<BrowserTab>>();
+            foreach (Cell cell in window.Panel.Cells)
+            {
+                groups.Add(new List<BrowserTab>(cell.Tabs));
+            }
+            return groups;
+        }
+
+        private static PaneModel PaneModelCopy(PaneModel source)
+        {
+            PaneModel copy = new PaneModel();
+            copy.Type = source.Type;
+            copy.Direction = source.Direction;
+            copy.Ratio = source.Ratio;
+            if (source.IsSplit)
+            {
+                copy.First = PaneModelCopy(source.First);
+                copy.Second = PaneModelCopy(source.Second);
+            }
+            return copy;
         }
 
         public static void Split(Cell cell, string direction)
@@ -823,9 +952,7 @@ namespace MuroSoc
             {
                 SetUiVisible(true);
             }
-            TabModel model = new TabModel();
-            model.Url = "about:blank";
-            model.Profile = cell.ProfileName;
+            TabModel model = App.Config.NewTabModel("about:blank", cell.ProfileName);
             try
             {
                 BrowserTab tab = await cell.CreateTabAsync(model, true);
@@ -865,9 +992,7 @@ namespace MuroSoc
                 current.Navigate(url);
                 return;
             }
-            TabModel model = new TabModel();
-            model.Url = url;
-            model.Profile = cell.ProfileName;
+            TabModel model = App.Config.NewTabModel(url, cell.ProfileName);
             try
             {
                 await cell.CreateTabAsync(model, true);
@@ -1146,6 +1271,15 @@ namespace MuroSoc
                 case Shortcuts.MaximizeCell:
                     ToggleMaximize();
                     break;
+                case Shortcuts.ToggleFullscreen:
+                    ToggleFullscreen();
+                    break;
+                case Shortcuts.Templates:
+                    OpenTemplates();
+                    break;
+                case Shortcuts.GlobalSettings:
+                    OpenGlobalSettings();
+                    break;
                 case Shortcuts.EditLayout:
                     SetEditMode(!EditMode);
                     break;
@@ -1204,6 +1338,19 @@ namespace MuroSoc
         public static List<MenuEntry> BuildCellMenu(Cell cell, BrowserTab tab)
         {
             List<MenuEntry> menu = new List<MenuEntry>();
+            menu.Add(MenuEntry.Item("Plantillas de layout...", Shortcuts.Display(Shortcuts.Templates), delegate { SetActiveCell(cell); OpenTemplates(); }));
+            MenuEntry ui = MenuEntry.Check("Mostrar interfaz", UiVisible, delegate { SetUiVisible(!UiVisible); });
+            ui.Shortcut = Shortcuts.Display(Shortcuts.ToggleUi);
+            menu.Add(ui);
+            MenuEntry full = MenuEntry.Check("Pantalla completa", App.Config.Fullscreen, delegate { ToggleFullscreen(); });
+            full.Shortcut = Shortcuts.Display(Shortcuts.ToggleFullscreen);
+            menu.Add(full);
+            MenuEntry maximize = MenuEntry.Check("Maximizar esta celda", cell.Window != null && cell.Window.Panel.MaximizedCell == cell, delegate { SetActiveCell(cell); ToggleMaximize(); });
+            maximize.Shortcut = Shortcuts.Display(Shortcuts.MaximizeCell);
+            menu.Add(maximize);
+            menu.Add(MenuEntry.Item("Bloquear muro", Shortcuts.Display(Shortcuts.LockWall), delegate { SetLocked(true); }));
+            menu.Add(MenuEntry.Separator());
+
             menu.Add(MenuEntry.Item("Pestaña nueva", Shortcuts.Display(Shortcuts.NewTab), delegate { NewTab(cell); }));
             MenuEntry reopen = MenuEntry.Item("Reabrir pestaña cerrada", Shortcuts.Display(Shortcuts.ReopenTab), delegate { SetActiveCell(cell); ReopenClosedTab(); });
             reopen.Enabled = ClosedTabs.Count > 0;
@@ -1211,11 +1358,17 @@ namespace MuroSoc
             if (tab != null)
             {
                 string url = tab.Url;
-                menu.Add(MenuEntry.Item("Abrir esta página en Edge", delegate { ExternalBrowser.OpenInEdge(url); }));
                 menu.Add(MenuEntry.Item("Abrir URL en esta pestaña...", delegate { PromptUrl(cell); }));
-                menu.Add(MenuEntry.Separator());
-                menu.AddRange(TabMenu.Build(cell, tab));
+                menu.Add(MenuEntry.Item("Abrir esta página en Edge", delegate { ExternalBrowser.OpenInEdge(url); }));
             }
+            menu.Add(MenuEntry.Separator());
+
+            if (tab != null)
+            {
+                menu.Add(MenuEntry.Sub("Esta pestaña", TabMenu.Build(cell, tab)));
+            }
+            menu.Add(MenuEntry.Item("Ajustes para todas las pestañas...", Shortcuts.Display(Shortcuts.GlobalSettings), delegate { SetActiveCell(cell); OpenGlobalSettings(); }));
+            menu.Add(MenuEntry.Item("Recargar todo el muro", Shortcuts.Display(Shortcuts.ReloadWall), delegate { ReloadWall(); }));
             menu.Add(MenuEntry.Separator());
 
             List<MenuEntry> cellMenu = new List<MenuEntry>();
@@ -1225,24 +1378,14 @@ namespace MuroSoc
             merge.Enabled = cell.Node != null && cell.Node.Parent != null;
             cellMenu.Add(merge);
             cellMenu.Add(MenuEntry.Sub("Perfil de la celda", BuildProfileMenu(cell)));
-            menu.Add(MenuEntry.Sub("Celda", cellMenu));
             menu.Add(MenuEntry.Sub("Layout", BuildLayoutMenu()));
+            menu.Add(MenuEntry.Sub("Celda", cellMenu));
             menu.Add(MenuEntry.Sub("Monitores", BuildMonitorMenu()));
-            menu.Add(MenuEntry.Separator());
-
-            menu.Add(MenuEntry.Check("Mostrar interfaz", UiVisible, delegate { SetUiVisible(!UiVisible); }));
-            menu[menu.Count - 1].Shortcut = Shortcuts.Display(Shortcuts.ToggleUi);
-            menu.Add(MenuEntry.Check("Editar layout", EditMode, delegate { SetEditMode(!EditMode); }));
-            menu[menu.Count - 1].Shortcut = Shortcuts.Display(Shortcuts.EditLayout);
-            menu.Add(MenuEntry.Item("Maximizar celda", Shortcuts.Display(Shortcuts.MaximizeCell), delegate { SetActiveCell(cell); ToggleMaximize(); }));
-            menu.Add(MenuEntry.Check("Pantalla completa", App.Config.Fullscreen, delegate { ToggleFullscreen(); }));
             menu.Add(MenuEntry.Check("Reloj", App.Config.ClockEnabled, delegate
             {
                 App.Config.ClockEnabled = !App.Config.ClockEnabled;
                 App.SaveConfig();
             }));
-            menu.Add(MenuEntry.Item("Bloquear muro", Shortcuts.Display(Shortcuts.LockWall), delegate { SetLocked(true); }));
-            menu.Add(MenuEntry.Item("Recargar todo el muro", Shortcuts.Display(Shortcuts.ReloadWall), delegate { ReloadWall(); }));
             menu.Add(MenuEntry.Separator());
 
             List<MenuEntry> signOut = new List<MenuEntry>();
@@ -1261,6 +1404,7 @@ namespace MuroSoc
         public static List<MenuEntry> BuildLayoutMenu()
         {
             List<MenuEntry> menu = new List<MenuEntry>();
+            menu.Add(MenuEntry.Item("Plantillas...", Shortcuts.Display(Shortcuts.Templates), delegate { OpenTemplates(); }));
             menu.Add(MenuEntry.Check("Editar layout", EditMode, delegate { SetEditMode(!EditMode); }));
             menu[menu.Count - 1].Shortcut = Shortcuts.Display(Shortcuts.EditLayout);
             menu.Add(MenuEntry.Separator());

@@ -21,12 +21,18 @@ namespace MuroSoc
         public const string OpenSettings = "Configuracion";
         public const string PickElement = "AislarElemento";
         public const string SaveLayout = "GuardarLayout";
+        public const string ToggleFullscreen = "PantallaCompleta";
+        public const string Templates = "PlantillasLayout";
+        public const string GlobalSettings = "AjustesGlobales";
 
         public static Dictionary<string, string> Defaults()
         {
             Dictionary<string, string> map = new Dictionary<string, string>();
             map[ToggleUi] = "F10";
-            map[MaximizeCell] = "F11";
+            map[ToggleFullscreen] = "F11";
+            map[MaximizeCell] = "Ctrl+F11";
+            map[Templates] = "Ctrl+Shift+P";
+            map[GlobalSettings] = "Ctrl+Shift+G";
             map[EditLayout] = "F2";
             map[LockWall] = "Ctrl+Shift+L";
             map[NewTab] = "Ctrl+T";
@@ -60,6 +66,9 @@ namespace MuroSoc
                 case OpenSettings: return "Configuración";
                 case PickElement: return "Aislar elemento";
                 case SaveLayout: return "Guardar layout";
+                case ToggleFullscreen: return "Pantalla completa";
+                case Templates: return "Plantillas de layout";
+                case GlobalSettings: return "Ajustes para todas las pestañas";
                 default: return action;
             }
         }

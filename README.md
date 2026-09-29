@@ -23,13 +23,20 @@ Usa Microsoft Edge WebView2 (Evergreen): el mismo motor que Edge, actualizado po
 ## Uso rápido
 
 - La primera vez abre una celda con la página inicial en el monitor principal, a pantalla completa.
-- **F10** muestra u oculta la interfaz (pestañas y barra de direcciones).
-- **☰** en la tira de pestañas o **clic derecho → Muro SOC** abre el menú de la celda.
+- **F10** muestra u oculta la interfaz (pestañas y barra de direcciones). **F11** entra o sale de pantalla completa.
+- En la tira de pestañas: **+** pestaña nueva, **⊞** plantillas de layout, **⛶** pantalla completa y **☰** menú de la celda. También con **clic derecho → Muro SOC**.
+- Con la interfaz oculta, al pasar el mouse por una celda aparece una barra flotante abajo a la derecha con el tiempo de autorefresh, **Interfaz**, **⛶** y **☰**. Se desactiva en *Configuración → General*.
 - Para salir: **Alt+F4** (pide confirmación) o menú → *Cerrar Muro SOC*.
+
+### Plantillas de layout
+
+**⊞** en la tira de pestañas, **Ctrl+Shift+P** o menú → *Plantillas de layout...* abre las plantillas: 1 celda, 2 y 3 columnas o filas, 2×2, 3×2, 2×3, 3×3, 4×2, 4×3, 4×4 y combinaciones con una celda grande.
+
+Cada plantilla se ve en miniatura gris. Al pasar el mouse, la vista previa grande muestra cómo quedaría el monitor y qué pestaña cae en cada celda. Nada cambia hasta pulsar **Aplicar**. Las pestañas abiertas se reparten en orden sin recargarse; se puede aplicar a un monitor o a todos.
 
 ### Crear un layout
 
-1. Pulsa **F2** (modo edición). Cada celda muestra una barra azul.
+1. Elige una plantilla o pulsa **F2** (modo edición). Cada celda muestra una barra azul.
 2. **Columnas ⇆** o **Filas ⇅** divide la celda. Arrastra los divisores azules para ajustar el tamaño.
 3. En cada celda escribe una URL (celda vacía) o usa **URL...**. Con **+** o **Ctrl+T** agregas más pestañas a la celda.
 4. **Perfil** elige el perfil de navegador de la celda (útil para tenants distintos).
@@ -49,7 +56,11 @@ Menú de la celda (☰ o clic derecho → Muro SOC):
 - **Zoom y ancho virtual**: zoom por pestaña (también Ctrl+rueda). *Ancho virtual* renderiza la página como si la celda midiera, por ejemplo, 1920 px.
 - **Ajustes de página**: fijar encuadre (posición de scroll), aislar un elemento (queda solo ocupando la celda), ocultar elementos, CSS propio por patrón de URL, ocultar scrollbars y ancho mínimo.
 
-Todo se guarda con el layout.
+Todo se guarda con el layout. Las pestañas con autorefresh muestran **⟳** junto al título (⏸ si está en pausa); el indicador desaparece al ocultar la interfaz.
+
+### Ajustes para todas las pestañas
+
+Menú → *Ajustes para todas las pestañas...* (**Ctrl+Shift+G**) cambia de una vez el autorefresh, las scrollbars o el zoom de todo el muro, de un monitor o de una celda. Opcionalmente guarda esos valores para las pestañas nuevas. Después cada pestaña se puede seguir ajustando por separado desde *Esta pestaña*.
 
 ### Atajos de teclado
 
@@ -58,7 +69,10 @@ Solo funcionan dentro de la app (no hay atajos globales). Se cambian en *Configu
 | Atajo | Acción |
 |---|---|
 | F10 | Mostrar u ocultar la interfaz |
-| F11 / Esc | Maximizar la celda activa / volver |
+| F11 | Pantalla completa |
+| Ctrl+F11 / Esc | Maximizar la celda activa / volver |
+| Ctrl+Shift+P | Plantillas de layout |
+| Ctrl+Shift+G | Ajustes para todas las pestañas |
 | F2 | Editar layout |
 | Ctrl+Shift+L | Bloquear o desbloquear el muro |
 | Ctrl+T / Ctrl+W | Pestaña nueva / cerrar pestaña |
@@ -74,7 +88,7 @@ Solo funcionan dentro de la app (no hay atajos globales). Se cambian en *Configu
 ### Modo muro
 
 - **Bloqueo**: una capa transparente evita clics accidentales. Se desbloquea con el atajo configurado y se recuerda al reiniciar.
-- **Reloj** opcional en una esquina, con zona horaria configurable.
+- **Reloj** opcional en una esquina, con zona horaria configurable. Se coloca dentro del área de la página, sin tapar las pestañas ni el menú.
 - El **cursor** se oculta tras unos segundos sin movimiento.
 
 ### SSO y popups

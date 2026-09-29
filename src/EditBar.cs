@@ -19,6 +19,7 @@ namespace MuroSoc
             AutoScroll = false;
             Visible = false;
 
+            AddButton("Plantillas ⊞", "Elegir una plantilla (2×2, 3×3...)", delegate { Wall.SetActiveCell(cell); Wall.OpenTemplates(); });
             AddButton("Columnas ⇆", "Dividir en dos columnas", delegate { Wall.Split(cell, PaneModel.Columns); });
             AddButton("Filas ⇅", "Dividir en dos filas", delegate { Wall.Split(cell, PaneModel.Rows); });
             AddButton("Fusionar", "Unir con la celda vecina", delegate { Wall.Merge(cell); });

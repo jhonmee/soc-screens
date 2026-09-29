@@ -11,6 +11,10 @@ namespace MuroSoc
         private static readonly Color Back = Color.FromArgb(24, 24, 24);
         private static readonly Color ActiveBack = Color.FromArgb(58, 58, 60);
         private static readonly Color HoverBack = Color.FromArgb(42, 42, 44);
+        private const int SlotMenu = 0;
+        private const int SlotFullscreen = 1;
+        private const int SlotTemplates = 2;
+        private const int ButtonCount = 4;
 
         private readonly Cell cell;
         private readonly ToolTip tip;
@@ -61,8 +65,10 @@ namespace MuroSoc
                 {
                     DrawTab(g, font, small, i, count);
                 }
-                DrawButton(g, font, PlusRect(), "+", hoverIndex == -2);
-                DrawButton(g, font, MenuRect(), "☰", hoverIndex == -3);
+                for (int slot = 0; slot < ButtonCount; slot++)
+                {
+                    DrawButton(g, font, ButtonRect(slot), ButtonGlyph(slot), hoverIndex == ButtonCode(slot));
+                }
             }
         }
 
@@ -71,19 +77,14 @@ namespace MuroSoc
             base.OnMouseDown(e);
             Wall.SetActiveCell(cell);
             int count = cell.Tabs.Count;
-            if (e.Button == MouseButtons.Left)
+            int button = ButtonAt(e.Location);
+            if (button >= 0)
             {
-                if (PlusRect().Contains(e.Location))
+                if (e.Button == MouseButtons.Left)
                 {
-                    Wall.NewTab(cell);
-                    return;
+                    RunButton(button);
                 }
-                if (MenuRect().Contains(e.Location))
-                {
-                    Rectangle menu = MenuRect();
-                    MenuEntry.ShowAt(this, new Point(menu.Left, menu.Bottom), Wall.BuildCellMenu(cell, cell.ActiveTab));
-                    return;
-                }
+                return;
             }
             int index = IndexAt(e.Location, count);
             if (index < 0)
@@ -134,13 +135,10 @@ namespace MuroSoc
             }
             int index = IndexAt(e.Location, count);
             bool close = index >= 0 && CloseRect(TabRect(index, count)).Contains(e.Location);
-            if (PlusRect().Contains(e.Location))
+            int button = ButtonAt(e.Location);
+            if (button >= 0)
             {
-                index = -2;
-            }
-            else if (MenuRect().Contains(e.Location))
-            {
-                index = -3;
+                index = ButtonCode(button);
             }
             if (index != hoverIndex || close != hoverClose)
             {
@@ -205,7 +203,7 @@ namespace MuroSoc
         {
             base.OnDoubleClick(e);
             Point point = PointToClient(Cursor.Position);
-            if (IndexAt(point, cell.Tabs.Count) < 0 && !PlusRect().Contains(point) && !MenuRect().Contains(point))
+            if (IndexAt(point, cell.Tabs.Count) < 0 && ButtonAt(point) < 0)
             {
                 Wall.NewTab(cell);
             }
@@ -238,13 +236,15 @@ namespace MuroSoc
                     text += "\r\n" + refresh;
                 }
             }
-            else if (index == -2)
+            else
             {
-                text = "Pestaña nueva (" + Shortcuts.Display(Shortcuts.NewTab) + ")";
-            }
-            else if (index == -3)
-            {
-                text = "Menú de la celda";
+                for (int slot = 0; slot < ButtonCount; slot++)
+                {
+                    if (index == ButtonCode(slot))
+                    {
+                        text = ButtonTip(slot);
+                    }
+                }
             }
             if (text != lastTip)
             {
@@ -270,19 +270,73 @@ namespace MuroSoc
             get { return Height; }
         }
 
-        private Rectangle PlusRect()
+        private static int ButtonCode(int slot)
         {
-            return new Rectangle(Width - ButtonWidth * 2, 0, ButtonWidth, Height);
+            return -10 - slot;
         }
 
-        private Rectangle MenuRect()
+        private static string ButtonGlyph(int slot)
         {
-            return new Rectangle(Width - ButtonWidth, 0, ButtonWidth, Height);
+            switch (slot)
+            {
+                case SlotMenu: return "☰";
+                case SlotFullscreen: return "⛶";
+                case SlotTemplates: return "⊞";
+                default: return "+";
+            }
+        }
+
+        private static string ButtonTip(int slot)
+        {
+            switch (slot)
+            {
+                case SlotMenu: return "Menú de la celda";
+                case SlotFullscreen: return (App.Config.Fullscreen ? "Salir de pantalla completa" : "Pantalla completa") + " (" + Shortcuts.Display(Shortcuts.ToggleFullscreen) + ")";
+                case SlotTemplates: return "Plantillas de layout (" + Shortcuts.Display(Shortcuts.Templates) + ")";
+                default: return "Pestaña nueva (" + Shortcuts.Display(Shortcuts.NewTab) + ")";
+            }
+        }
+
+        private void RunButton(int slot)
+        {
+            switch (slot)
+            {
+                case SlotMenu:
+                    Rectangle menu = ButtonRect(SlotMenu);
+                    MenuEntry.ShowAt(this, new Point(menu.Left, menu.Bottom), Wall.BuildCellMenu(cell, cell.ActiveTab));
+                    break;
+                case SlotFullscreen:
+                    Wall.ToggleFullscreen();
+                    break;
+                case SlotTemplates:
+                    Wall.OpenTemplates();
+                    break;
+                default:
+                    Wall.NewTab(cell);
+                    break;
+            }
+        }
+
+        private Rectangle ButtonRect(int slot)
+        {
+            return new Rectangle(Width - ButtonWidth * (slot + 1), 0, ButtonWidth, Height);
+        }
+
+        private int ButtonAt(Point point)
+        {
+            for (int slot = 0; slot < ButtonCount; slot++)
+            {
+                if (ButtonRect(slot).Contains(point))
+                {
+                    return slot;
+                }
+            }
+            return -1;
         }
 
         private Rectangle TabRect(int index, int count)
         {
-            int available = Math.Max(0, Width - ButtonWidth * 2);
+            int available = Math.Max(0, Width - ButtonWidth * ButtonCount);
             int max = Dpi.Scale(this, 240);
             int min = Dpi.Scale(this, 60);
             int width = count == 0 ? max : Math.Max(min, Math.Min(max, available / count));
@@ -345,6 +399,16 @@ namespace MuroSoc
                     g.FillEllipse(brush, x, rect.Top + (rect.Height - d) / 2, d, d);
                 }
                 x += d + Dpi.Scale(this, 6);
+            }
+
+            if (tab.Settings.AutoRefreshSeconds > 0)
+            {
+                bool paused = tab.IsRefreshPaused;
+                string glyph = paused ? "⏸" : "⟳";
+                Size glyphSize = TextRenderer.MeasureText(g, glyph, small, Size.Empty, TextFormatFlags.NoPadding);
+                Rectangle glyphRect = new Rectangle(x, rect.Top, glyphSize.Width, rect.Height);
+                TextRenderer.DrawText(g, glyph, small, glyphRect, paused ? Color.Gray : Color.FromArgb(80, 200, 120), TextFormatFlags.VerticalCenter | TextFormatFlags.Left | TextFormatFlags.NoPadding);
+                x += glyphSize.Width + Dpi.Scale(this, 5);
             }
 
             Rectangle close = CloseRect(rect);
