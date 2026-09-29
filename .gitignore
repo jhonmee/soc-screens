@@ -1,0 +1,10 @@
+dist/
+bin/
+obj/
+*.user
+*.suo
+.vs/
+Profile/
+MuroSOC/
+logs/
+*.pfx
