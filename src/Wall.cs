@@ -13,6 +13,7 @@ namespace MuroSoc
         private static readonly List<WallWindow> Windows = new List<WallWindow>();
         private static readonly List<TabModel> ClosedTabs = new List<TabModel>();
         private static ApplicationContext context;
+        private static Timer autosaveTimer;
         private static Cell activeCell;
         private static Cell dragTarget;
         private static bool allowClose;
@@ -47,9 +48,310 @@ namespace MuroSoc
             context = appContext;
             UiVisible = true;
             App.ConfigReloaded += OnConfigReloaded;
-            LayoutModel layout = DefaultLayout(startUrl);
+            SessionState state = LayoutStore.LoadState();
+            List<string> warnings = new List<string>();
+            if (state != null && state.Layout != null && state.Layout.Monitors.Count > 0)
+            {
+                UiVisible = state.UiVisible;
+                LayoutName = state.LayoutName ?? string.Empty;
+                RestoreClosedTabs(state.ClosedTabs);
+                BuildWindows(state.Layout, warnings);
+                Log.Info("Sesión restaurada" + (LayoutName.Length > 0 ? " (layout " + LayoutName + ")" : string.Empty));
+                if (!string.IsNullOrEmpty(startUrl))
+                {
+                    OpenInActiveCell(startUrl);
+                }
+            }
+            else
+            {
+                LayoutName = string.Empty;
+                BuildWindows(DefaultLayout(startUrl), warnings);
+            }
+            autosaveTimer = new Timer();
+            autosaveTimer.Interval = 60000;
+            autosaveTimer.Tick += delegate { SaveState(); };
+            autosaveTimer.Start();
+        }
+
+        public static void SaveState()
+        {
+            if (Windows.Count == 0)
+            {
+                return;
+            }
+            try
+            {
+                SessionState state = new SessionState();
+                state.LayoutName = LayoutName;
+                state.UiVisible = UiVisible;
+                state.Layout = Snapshot(LayoutName);
+                state.ClosedTabs = ClosedTabsSnapshot();
+                LayoutStore.SaveState(state);
+            }
+            catch (Exception ex)
+            {
+                Log.Error("No se pudo guardar el estado", ex);
+            }
+        }
+
+        public static async void OpenInActiveCell(string url)
+        {
+            Cell cell = ActiveCell ?? FirstCell();
+            if (cell == null || string.IsNullOrEmpty(url))
+            {
+                return;
+            }
+            TabModel model = new TabModel();
+            model.Url = url;
+            model.Profile = cell.ProfileName;
+            try
+            {
+                await cell.CreateTabAsync(model, true);
+            }
+            catch (Exception ex)
+            {
+                Log.Error("No se pudo abrir la URL inicial", ex);
+            }
+        }
+
+        public static void SaveLayout()
+        {
+            if (string.IsNullOrEmpty(LayoutName))
+            {
+                SaveLayoutAs();
+                return;
+            }
+            WriteLayout(LayoutName);
+        }
+
+        public static void SaveLayoutAs()
+        {
+            IWin32Window owner = OwnerWindow();
+            string name = InputDialog.Prompt(owner, "Guardar layout", "Nombre del layout (por ejemplo \"Turno día\" o \"Incidente\"):", LayoutName, false);
+            if (name == null)
+            {
+                return;
+            }
+            name = name.Trim();
+            if (!LayoutStore.IsValidName(name))
+            {
+                MessageBox.Show(owner, "Escribe un nombre de hasta 60 caracteres.", "Guardar layout", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                return;
+            }
+            if (!string.Equals(name, LayoutName, StringComparison.CurrentCultureIgnoreCase) && LayoutStore.Exists(name))
+            {
+                DialogResult answer = MessageBox.Show(owner, "Ya existe un layout llamado \"" + name + "\". ¿Reemplazarlo?", "Guardar layout", MessageBoxButtons.YesNo, MessageBoxIcon.Question, MessageBoxDefaultButton.Button2);
+                if (answer != DialogResult.Yes)
+                {
+                    return;
+                }
+            }
+            WriteLayout(name);
+        }
+
+        public static void NewLayout()
+        {
+            if (!ConfirmLeaveLayout())
+            {
+                return;
+            }
             LayoutName = string.Empty;
+            LayoutModel layout = DefaultLayout("about:blank");
+            layout.Monitors[0].Root = PaneModel.NewCell(null);
             BuildWindows(layout, new List<string>());
+            SetEditMode(true);
+            SaveState();
+        }
+
+        public static void LoadLayout(string name)
+        {
+            if (!ConfirmLeaveLayout())
+            {
+                return;
+            }
+            LayoutModel layout;
+            try
+            {
+                layout = LayoutStore.Load(name);
+            }
+            catch (Exception ex)
+            {
+                Log.Error("No se pudo cargar el layout " + name, ex);
+                MessageBox.Show(OwnerWindow(), "No se pudo cargar el layout \"" + name + "\".\r\n\r\n" + ex.Message, "Muro SOC", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                return;
+            }
+            if (layout == null)
+            {
+                return;
+            }
+            LayoutName = name;
+            List<string> warnings = new List<string>();
+            BuildWindows(layout, warnings);
+            Log.Info("Layout cargado: " + name);
+            SaveState();
+        }
+
+        public static void LoadLayoutByIndex(int index)
+        {
+            List<string> names = LayoutStore.ListNames();
+            if (index >= 0 && index < names.Count)
+            {
+                LoadLayout(names[index]);
+            }
+        }
+
+        public static void DeleteLayout(string name)
+        {
+            IWin32Window owner = OwnerWindow();
+            DialogResult answer = MessageBox.Show(owner, "¿Eliminar el layout \"" + name + "\"?", "Eliminar layout", MessageBoxButtons.YesNo, MessageBoxIcon.Warning, MessageBoxDefaultButton.Button2);
+            if (answer != DialogResult.Yes)
+            {
+                return;
+            }
+            try
+            {
+                LayoutStore.Delete(name);
+                if (string.Equals(name, LayoutName, StringComparison.CurrentCultureIgnoreCase))
+                {
+                    SetLayoutName(string.Empty);
+                }
+                Log.Info("Layout eliminado: " + name);
+            }
+            catch (Exception ex)
+            {
+                Log.Error("No se pudo eliminar el layout " + name, ex);
+                MessageBox.Show(owner, "No se pudo eliminar el layout.\r\n\r\n" + ex.Message, "Eliminar layout", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            }
+        }
+
+        public static void ExportLayout()
+        {
+            IWin32Window owner = OwnerWindow();
+            using (SaveFileDialog dialog = new SaveFileDialog())
+            {
+                dialog.Title = "Exportar layout";
+                dialog.Filter = "Layout de Muro SOC (*.json)|*.json";
+                dialog.FileName = (string.IsNullOrEmpty(LayoutName) ? "layout" : LayoutName) + ".json";
+                dialog.OverwritePrompt = true;
+                if (dialog.ShowDialog(owner) != DialogResult.OK)
+                {
+                    return;
+                }
+                try
+                {
+                    LayoutStore.Export(Snapshot(string.IsNullOrEmpty(LayoutName) ? System.IO.Path.GetFileNameWithoutExtension(dialog.FileName) : LayoutName), dialog.FileName);
+                    Log.Info("Layout exportado");
+                }
+                catch (Exception ex)
+                {
+                    Log.Error("No se pudo exportar el layout", ex);
+                    MessageBox.Show(owner, "No se pudo exportar el layout.\r\n\r\n" + ex.Message, "Exportar layout", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                }
+            }
+        }
+
+        public static void ImportLayout()
+        {
+            IWin32Window owner = OwnerWindow();
+            string path;
+            using (OpenFileDialog dialog = new OpenFileDialog())
+            {
+                dialog.Title = "Importar layout";
+                dialog.Filter = "Layout de Muro SOC (*.json)|*.json";
+                if (dialog.ShowDialog(owner) != DialogResult.OK)
+                {
+                    return;
+                }
+                path = dialog.FileName;
+            }
+            LayoutModel layout;
+            try
+            {
+                layout = LayoutStore.Import(path);
+            }
+            catch (Exception ex)
+            {
+                Log.Error("No se pudo importar el layout", ex);
+                MessageBox.Show(owner, "El archivo no es un layout válido.\r\n\r\n" + ex.Message, "Importar layout", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                return;
+            }
+            string name = InputDialog.Prompt(owner, "Importar layout", "Nombre para el layout importado:", layout.Name, false);
+            if (name == null)
+            {
+                return;
+            }
+            name = name.Trim();
+            if (!LayoutStore.IsValidName(name))
+            {
+                MessageBox.Show(owner, "Escribe un nombre de hasta 60 caracteres.", "Importar layout", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                return;
+            }
+            if (LayoutStore.Exists(name))
+            {
+                DialogResult replace = MessageBox.Show(owner, "Ya existe un layout llamado \"" + name + "\". ¿Reemplazarlo?", "Importar layout", MessageBoxButtons.YesNo, MessageBoxIcon.Question, MessageBoxDefaultButton.Button2);
+                if (replace != DialogResult.Yes)
+                {
+                    return;
+                }
+            }
+            layout.Name = name;
+            LayoutStore.Save(layout);
+            Log.Info("Layout importado: " + name);
+            DialogResult load = MessageBox.Show(owner, "Layout \"" + name + "\" importado. ¿Cargarlo ahora?", "Importar layout", MessageBoxButtons.YesNo, MessageBoxIcon.Question);
+            if (load == DialogResult.Yes)
+            {
+                LoadLayout(name);
+            }
+        }
+
+        private static void WriteLayout(string name)
+        {
+            try
+            {
+                LayoutStore.Save(Snapshot(name));
+                SetLayoutName(name);
+                IsDirty = false;
+                SaveState();
+                Log.Info("Layout guardado: " + name);
+                Cell cell = ActiveCell ?? FirstCell();
+                if (cell != null)
+                {
+                    cell.ShowNotice(null, new NoticeEventArgs(NoticeLevel.Info, "Layout \"" + name + "\" guardado."));
+                }
+            }
+            catch (Exception ex)
+            {
+                Log.Error("No se pudo guardar el layout " + name, ex);
+                MessageBox.Show(OwnerWindow(), "No se pudo guardar el layout.\r\n\r\n" + ex.Message, "Guardar layout", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            }
+        }
+
+        private static bool ConfirmLeaveLayout()
+        {
+            if (!IsDirty || string.IsNullOrEmpty(LayoutName))
+            {
+                return true;
+            }
+            DialogResult answer = MessageBox.Show(OwnerWindow(), "¿Guardar los cambios del layout \"" + LayoutName + "\" antes de cambiar?", "Muro SOC", MessageBoxButtons.YesNoCancel, MessageBoxIcon.Question);
+            if (answer == DialogResult.Cancel)
+            {
+                return false;
+            }
+            if (answer == DialogResult.Yes)
+            {
+                WriteLayout(LayoutName);
+            }
+            return true;
+        }
+
+        private static IWin32Window OwnerWindow()
+        {
+            Cell cell = ActiveCell;
+            if (cell != null && cell.FindForm() != null)
+            {
+                return cell.FindForm();
+            }
+            return MainWindow;
         }
 
         public static LayoutModel DefaultLayout(string url)
@@ -192,11 +494,6 @@ namespace MuroSoc
             {
                 cell.UpdateChrome();
             }
-        }
-
-        public static void OnCellChanged(Cell cell)
-        {
-            IsDirty = true;
         }
 
         public static void MarkDirty()
@@ -652,7 +949,12 @@ namespace MuroSoc
             {
                 return;
             }
+            SaveState();
             IsExiting = true;
+            if (autosaveTimer != null)
+            {
+                autosaveTimer.Stop();
+            }
             Log.Info("Cierre de Muro SOC");
             foreach (WallWindow window in new List<WallWindow>(Windows))
             {
@@ -679,6 +981,12 @@ namespace MuroSoc
                     return true;
                 }
                 return false;
+            }
+            Keys code = keys & Keys.KeyCode;
+            if ((keys & Keys.Modifiers) == Keys.Control && code >= Keys.D1 && code <= Keys.D9)
+            {
+                LoadLayoutByIndex(code - Keys.D1);
+                return true;
             }
             string action = Shortcuts.Match(keys);
             if (action != null)
@@ -740,6 +1048,9 @@ namespace MuroSoc
                 case Shortcuts.ReloadWall:
                     ReloadWall();
                     break;
+                case Shortcuts.SaveLayout:
+                    SaveLayout();
+                    break;
             }
         }
 
@@ -766,6 +1077,7 @@ namespace MuroSoc
             cellMenu.Add(merge);
             cellMenu.Add(MenuEntry.Sub("Perfil de la celda", BuildProfileMenu(cell)));
             menu.Add(MenuEntry.Sub("Celda", cellMenu));
+            menu.Add(MenuEntry.Sub("Layout", BuildLayoutMenu()));
             menu.Add(MenuEntry.Sub("Monitores", BuildMonitorMenu()));
             menu.Add(MenuEntry.Separator());
 
@@ -787,6 +1099,42 @@ namespace MuroSoc
             menu.Add(MenuEntry.Sub("Cerrar sesión en todo", signOut));
             menu.Add(MenuEntry.Item("Acerca de Muro SOC", delegate { App.ShowAbout(cell.FindForm()); }));
             menu.Add(MenuEntry.Item("Cerrar Muro SOC", delegate { RequestExit(cell.FindForm()); }));
+            return menu;
+        }
+
+        public static List<MenuEntry> BuildLayoutMenu()
+        {
+            List<MenuEntry> menu = new List<MenuEntry>();
+            menu.Add(MenuEntry.Check("Editar layout", EditMode, delegate { SetEditMode(!EditMode); }));
+            menu[menu.Count - 1].Shortcut = Shortcuts.Display(Shortcuts.EditLayout);
+            menu.Add(MenuEntry.Separator());
+            string saveText = string.IsNullOrEmpty(LayoutName) ? "Guardar layout..." : "Guardar \"" + LayoutName + "\"";
+            menu.Add(MenuEntry.Item(saveText, Shortcuts.Display(Shortcuts.SaveLayout), delegate { SaveLayout(); }));
+            menu.Add(MenuEntry.Item("Guardar como...", delegate { SaveLayoutAs(); }));
+            menu.Add(MenuEntry.Item("Layout nuevo", delegate { NewLayout(); }));
+            menu.Add(MenuEntry.Separator());
+            List<string> names = LayoutStore.ListNames();
+            List<MenuEntry> load = new List<MenuEntry>();
+            List<MenuEntry> delete = new List<MenuEntry>();
+            for (int i = 0; i < names.Count; i++)
+            {
+                string name = names[i];
+                MenuEntry entry = MenuEntry.Check(name, string.Equals(name, LayoutName, StringComparison.CurrentCultureIgnoreCase), delegate { LoadLayout(name); });
+                if (i < 9)
+                {
+                    entry.Shortcut = "Ctrl+" + (i + 1);
+                }
+                load.Add(entry);
+                delete.Add(MenuEntry.Item(name, delegate { DeleteLayout(name); }));
+            }
+            MenuEntry loadMenu = MenuEntry.Sub("Cargar", load);
+            loadMenu.Enabled = names.Count > 0;
+            menu.Add(loadMenu);
+            menu.Add(MenuEntry.Item("Exportar...", delegate { ExportLayout(); }));
+            menu.Add(MenuEntry.Item("Importar...", delegate { ImportLayout(); }));
+            MenuEntry deleteMenu = MenuEntry.Sub("Eliminar", delete);
+            deleteMenu.Enabled = names.Count > 0;
+            menu.Add(deleteMenu);
             return menu;
         }
 

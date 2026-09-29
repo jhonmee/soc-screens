@@ -28,6 +28,7 @@ namespace MuroSoc
                 Control button = (Control)sender;
                 MenuEntry.ShowAt(button, new Point(0, button.Height), Wall.BuildProfileMenu(cell));
             });
+            AddButton("Guardar layout", "Guardar el layout actual", delegate { Wall.SaveLayout(); });
             AddButton("Terminar", "Salir del modo edición", delegate { Wall.SetEditMode(false); });
 
             info = new Label();

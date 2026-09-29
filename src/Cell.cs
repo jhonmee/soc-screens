@@ -136,6 +136,7 @@ namespace MuroSoc
             }
             index = Math.Max(0, Math.Min(index, tabs.Count));
             tabs.Insert(index, tab);
+            Wall.MarkDirty();
             if (activate || active == null)
             {
                 Activate(tab);
@@ -155,6 +156,7 @@ namespace MuroSoc
                 return;
             }
             tabs.RemoveAt(index);
+            Wall.MarkDirty();
             if (active == tab)
             {
                 active = null;
@@ -306,7 +308,6 @@ namespace MuroSoc
             address.Bind(active);
             editBar.RefreshInfo();
             UpdateChrome();
-            Wall.OnCellChanged(this);
         }
 
         public Task<BrowserTab> OpenScriptTabAsync(BrowserTab opener)
@@ -328,7 +329,6 @@ namespace MuroSoc
                 UpdateChrome();
             }
             strip.Invalidate();
-            Wall.OnCellChanged(this);
         }
 
         public void ShowNotice(BrowserTab source, NoticeEventArgs notice)

@@ -15,6 +15,7 @@ namespace MuroSoc
         private CoreWebView2Controller controller;
         private Image favicon;
         private bool applyingZoom;
+        private string lastNonLoginUrl;
 
         private BrowserTab(ITabHost host, CoreWebView2Controller controller, TabModel settings, BrowserTab opener, bool isPopup)
         {
@@ -128,7 +129,7 @@ namespace MuroSoc
         public TabModel Snapshot()
         {
             TabModel model = Settings.Clone();
-            string url = Url;
+            string url = IsAtLogin && !string.IsNullOrEmpty(lastNonLoginUrl) ? lastNonLoginUrl : Url;
             if (!string.IsNullOrEmpty(url))
             {
                 model.Url = url;
@@ -260,6 +261,10 @@ namespace MuroSoc
         public void UpdateLoginState()
         {
             bool atLogin = !IsPopup && LoginDetector.IsLoginUrl(Url, App.Config.LoginUrlPatterns);
+            if (!atLogin && !string.IsNullOrEmpty(Url) && Url != "about:blank")
+            {
+                lastNonLoginUrl = Url;
+            }
             if (atLogin == IsAtLogin)
             {
                 return;

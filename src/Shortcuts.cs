@@ -20,6 +20,7 @@ namespace MuroSoc
         public const string ReloadWall = "RecargarMuro";
         public const string OpenSettings = "Configuracion";
         public const string PickElement = "AislarElemento";
+        public const string SaveLayout = "GuardarLayout";
 
         public static Dictionary<string, string> Defaults()
         {
@@ -37,6 +38,7 @@ namespace MuroSoc
             map[ReloadWall] = "Ctrl+Shift+F5";
             map[OpenSettings] = "Ctrl+Oemcomma";
             map[PickElement] = "Ctrl+Shift+E";
+            map[SaveLayout] = "Ctrl+Shift+S";
             return map;
         }
 
@@ -57,6 +59,7 @@ namespace MuroSoc
                 case ReloadWall: return "Recargar todo el muro";
                 case OpenSettings: return "Configuración";
                 case PickElement: return "Aislar elemento";
+                case SaveLayout: return "Guardar layout";
                 default: return action;
             }
         }
