@@ -116,6 +116,22 @@ namespace MuroSoc
             UpdateCursor(now);
         }
 
+        public static void OpenSettings()
+        {
+            using (SettingsForm form = new SettingsForm())
+            {
+                if (form.ShowDialog(OwnerWindow()) != DialogResult.OK)
+                {
+                    return;
+                }
+            }
+            foreach (WallWindow window in Windows)
+            {
+                window.ApplyWindowMode();
+            }
+            RefreshChrome();
+        }
+
         public static void SetLocked(bool locked)
         {
             if (locked)
@@ -1173,6 +1189,9 @@ namespace MuroSoc
                 case Shortcuts.SaveLayout:
                     SaveLayout();
                     break;
+                case Shortcuts.OpenSettings:
+                    OpenSettings();
+                    break;
                 case Shortcuts.PickElement:
                     if (cell != null && cell.ActiveTab != null)
                     {
@@ -1233,6 +1252,7 @@ namespace MuroSoc
                 signOut.Add(MenuEntry.Item("Perfil " + profile + "...", delegate { App.SignOutProfile(cell.FindForm(), target); }));
             }
             menu.Add(MenuEntry.Sub("Cerrar sesión en todo", signOut));
+            menu.Add(MenuEntry.Item("Configuración...", Shortcuts.Display(Shortcuts.OpenSettings), delegate { OpenSettings(); }));
             menu.Add(MenuEntry.Item("Acerca de Muro SOC", delegate { App.ShowAbout(cell.FindForm()); }));
             menu.Add(MenuEntry.Item("Cerrar Muro SOC", delegate { RequestExit(cell.FindForm()); }));
             return menu;

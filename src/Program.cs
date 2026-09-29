@@ -31,14 +31,25 @@ namespace MuroSoc
                 return;
             }
 
-            App.Initialize(runtimeVersion);
+            bool firstInstance;
+            using (System.Threading.Mutex mutex = new System.Threading.Mutex(true, @"Local\MuroSOC-SingleInstance", out firstInstance))
+            {
+                if (!firstInstance)
+                {
+                    MessageBox.Show("Muro SOC ya está abierto en esta sesión.", "Muro SOC", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                    return;
+                }
 
-            string startUrl = args.Length > 0 ? UrlInput.Normalize(args[0]) : null;
-            ApplicationContext context = new ApplicationContext();
-            Application.Idle += StartOnce;
-            pendingContext = context;
-            pendingUrl = startUrl;
-            Application.Run(context);
+                App.Initialize(runtimeVersion);
+
+                string startUrl = args.Length > 0 ? UrlInput.Normalize(args[0]) : null;
+                ApplicationContext context = new ApplicationContext();
+                Application.Idle += StartOnce;
+                pendingContext = context;
+                pendingUrl = startUrl;
+                Application.Run(context);
+                GC.KeepAlive(mutex);
+            }
         }
 
         private static void StartOnce(object sender, EventArgs e)
