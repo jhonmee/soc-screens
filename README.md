@@ -2,7 +2,7 @@
 
 Navegador de escritorio para el muro de pantallas del SOC. Usa Microsoft Edge WebView2 (Evergreen) y muestra consolas web de seguridad en celdas y pestañas, con SSO de Microsoft Entra ID.
 
-> Estado: hito 1 (esqueleto). Por ahora la app abre una sola ventana con una página. Las demás funciones llegan en los siguientes hitos.
+> Estado: hito 2. Una ventana con una pestaña, environment compartido, perfiles, permisos, descargas y lista de dominios. Las celdas, pestañas y layouts llegan en los siguientes hitos.
 
 ## Requisitos
 
@@ -38,6 +38,26 @@ build.cmd
 - `build.cmd 1.0.57` compila con esa versión exacta sin tocar `VERSION` (así lo usa el CI).
 
 > **Aviso EDR:** compilar en local ejecuta `csc.exe`, y CrowdStrike Falcon puede registrarlo o alertarlo. Por eso se recomienda usar el build de GitHub Actions. La app en sí nunca compila código en tiempo de ejecución.
+
+## Configuración
+
+Todo se guarda en `%LOCALAPPDATA%\MuroSOC\config.json`. Si editas el archivo con la app abierta, los cambios se aplican solos en unos segundos. Si el JSON tiene un error, la app lo avisa y mantiene la configuración anterior. La ventana de configuración llega en el hito 10.
+
+| Clave | Por defecto | Qué hace |
+|---|---|---|
+| `HomeUrl` | `https://security.microsoft.com` | Página inicial. |
+| `Profiles` | `["default"]` | Perfiles de navegador. Cada perfil tiene cookies propias (útil para varios tenants). Nombres con letras, números, `-` y `_`. |
+| `DevToolsEnabled` | `false` | Habilita las herramientas de desarrollo (F12). |
+| `DownloadsEnabled` | `false` | Permite descargas hacia `%LOCALAPPDATA%\MuroSOC\downloads`. |
+| `AllowlistEnabled` | `false` | Si está activo, solo se navega a `AllowedDomains` y a los dominios de login de Microsoft. |
+| `AllowedDomains` | `[]` | Dominios permitidos. Incluye subdominios: `crowdstrike.com` cubre `falcon.us-2.crowdstrike.com`. |
+| `PermissionRules` | `[]` | Excepciones de permisos por dominio, por ejemplo `{"Domain":"teams.microsoft.com","Permission":"microphone","Allow":true}`. |
+
+Permisos por defecto: se permiten `clipboard`, `autoplay` y `storage`; se deniegan `camera`, `microphone`, `geolocation`, `notifications`, `midi` y el resto. `"Permission":"*"` aplica a todos.
+
+Los enlaces a aplicaciones externas (`mailto:`, `ms-teams:`, etc.) se bloquean para que la app no lance otros procesos.
+
+Clic derecho en cualquier página → **Muro SOC**: abrir la página en Edge, cerrar sesión en todo (por perfil) y Acerca de.
 
 ## SDK de WebView2
 

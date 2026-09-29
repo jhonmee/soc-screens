@@ -19,9 +19,9 @@ namespace MuroSoc
                 return;
             }
 
-            AppPaths.EnsureCreated();
+            App.Initialize(runtimeVersion);
 
-            string startUrl = args.Length > 0 ? args[0] : "https://www.microsoft.com/es-co/security";
+            string startUrl = args.Length > 0 ? args[0] : App.Config.HomeUrl;
             Application.Run(new WallWindow(startUrl));
         }
     }
