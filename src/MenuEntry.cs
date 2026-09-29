@@ -99,8 +99,7 @@ namespace MuroSoc
                     continue;
                 }
                 CoreWebView2ContextMenuItemKind kind = entry.Checked ? CoreWebView2ContextMenuItemKind.CheckBox : CoreWebView2ContextMenuItemKind.Command;
-                string label = string.IsNullOrEmpty(entry.Shortcut) ? entry.Text : entry.Text + "\t" + entry.Shortcut;
-                CoreWebView2ContextMenuItem item = environment.CreateContextMenuItem(label, null, kind);
+                CoreWebView2ContextMenuItem item = environment.CreateContextMenuItem(entry.Text, null, kind);
                 item.IsEnabled = entry.Enabled && entry.Action != null;
                 if (entry.Checked)
                 {

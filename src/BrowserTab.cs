@@ -207,12 +207,32 @@ namespace MuroSoc
 
         public bool CanGoBack
         {
-            get { return Core != null && Core.CanGoBack; }
+            get
+            {
+                try
+                {
+                    return Core != null && Core.CanGoBack;
+                }
+                catch (Exception)
+                {
+                    return false;
+                }
+            }
         }
 
         public bool CanGoForward
         {
-            get { return Core != null && Core.CanGoForward; }
+            get
+            {
+                try
+                {
+                    return Core != null && Core.CanGoForward;
+                }
+                catch (Exception)
+                {
+                    return false;
+                }
+            }
         }
 
         public static async Task<BrowserTab> CreateAsync(ITabHost host, TabModel settings, BrowserTab opener, bool isPopup)
@@ -344,7 +364,13 @@ namespace MuroSoc
             model.Profile = ProfileName;
             if (controller != null && Settings.VirtualWidth == 0)
             {
-                model.Zoom = controller.ZoomFactor;
+                try
+                {
+                    model.Zoom = controller.ZoomFactor;
+                }
+                catch (Exception)
+                {
+                }
             }
             return model;
         }
