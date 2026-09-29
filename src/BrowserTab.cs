@@ -95,6 +95,11 @@ namespace MuroSoc
             get { return scriptDialogOpen; }
         }
 
+        public bool IsRefreshPaused
+        {
+            get { return pauseReason != null; }
+        }
+
         public string RefreshCountdownText
         {
             get

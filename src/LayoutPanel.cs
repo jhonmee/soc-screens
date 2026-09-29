@@ -100,6 +100,36 @@ namespace MuroSoc
             ResumeLayout(true);
         }
 
+        public List<Control> SwapRoot(PaneNode node)
+        {
+            List<Control> old = new List<Control>();
+            foreach (Control control in Controls)
+            {
+                old.Add(control);
+            }
+            SuspendLayout();
+            foreach (Control control in old)
+            {
+                control.Visible = false;
+            }
+            root = node;
+            maximized = null;
+            AddControls(node);
+            ResumeLayout(true);
+            return old;
+        }
+
+        public void RemoveControls(List<Control> controls)
+        {
+            SuspendLayout();
+            foreach (Control control in controls)
+            {
+                Controls.Remove(control);
+                control.Dispose();
+            }
+            ResumeLayout(true);
+        }
+
         public void SetMaximized(Cell cell)
         {
             maximized = cell;

@@ -20,6 +20,7 @@ namespace MuroSoc
         private readonly CheckBox downloads = new CheckBox();
         private readonly NumericUpDown cursorSeconds = new NumericUpDown();
         private readonly CheckBox autostart = new CheckBox();
+        private readonly CheckBox hoverBar = new CheckBox();
 
         private readonly CheckBox clockEnabled = new CheckBox();
         private readonly CheckBox clockAllMonitors = new CheckBox();
@@ -103,6 +104,7 @@ namespace MuroSoc
             cursorSeconds.Maximum = 3600;
             cursorSeconds.Width = 80;
             AddRow(table, "Ocultar cursor tras (s, 0 = nunca)", cursorSeconds);
+            AddCheck(table, hoverBar, "Con la interfaz oculta, mostrar una barra flotante al pasar el mouse por una celda");
             AddCheck(table, autostart, "Abrir Muro SOC al iniciar sesión en Windows");
             return NewPage("General", table);
         }
@@ -245,6 +247,7 @@ namespace MuroSoc
             downloads.Checked = config.DownloadsEnabled;
             cursorSeconds.Value = Math.Max(0, Math.Min(3600, config.CursorHideSeconds));
             autostart.Checked = StartupShortcut.IsEnabled();
+            hoverBar.Checked = config.ShowHoverBar;
 
             clockEnabled.Checked = config.ClockEnabled;
             clockAllMonitors.Checked = config.ClockAllMonitors;
@@ -367,6 +370,7 @@ namespace MuroSoc
             config.DevToolsEnabled = devTools.Checked;
             config.DownloadsEnabled = downloads.Checked;
             config.CursorHideSeconds = (int)cursorSeconds.Value;
+            config.ShowHoverBar = hoverBar.Checked;
             config.ClockEnabled = clockEnabled.Checked;
             config.ClockAllMonitors = clockAllMonitors.Checked;
             config.ClockTimeZone = clockZone.SelectedIndex > 0 ? zones[clockZone.SelectedIndex - 1].Id : string.Empty;

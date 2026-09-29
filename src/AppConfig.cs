@@ -22,7 +22,7 @@ namespace MuroSoc
     [DataContract]
     internal sealed class AppConfig
     {
-        public const int CurrentSchemaVersion = 1;
+        public const int CurrentSchemaVersion = 2;
 
         private static readonly Regex ProfileNamePattern = new Regex("^[A-Za-z0-9_-]{1,64}$");
 
@@ -86,6 +86,18 @@ namespace MuroSoc
         [DataMember(Order = 20)]
         public bool ClockAllMonitors { get; set; }
 
+        [DataMember(Order = 21)]
+        public bool ShowHoverBar { get; set; }
+
+        [DataMember(Order = 22)]
+        public int NewTabAutoRefreshSeconds { get; set; }
+
+        [DataMember(Order = 23)]
+        public bool NewTabHideScrollbars { get; set; }
+
+        [DataMember(Order = 24)]
+        public double NewTabZoom { get; set; }
+
         public AppConfig()
         {
             SetDefaults();
@@ -98,9 +110,26 @@ namespace MuroSoc
 
         public void Normalize()
         {
-            if (SchemaVersion <= 0)
+            if (SchemaVersion < 2 && KeyBindings != null)
             {
-                SchemaVersion = CurrentSchemaVersion;
+                string maximize;
+                if (KeyBindings.TryGetValue(Shortcuts.MaximizeCell, out maximize) && maximize == "F11")
+                {
+                    KeyBindings[Shortcuts.MaximizeCell] = "Ctrl+F11";
+                }
+            }
+            SchemaVersion = CurrentSchemaVersion;
+            if (NewTabAutoRefreshSeconds < 0)
+            {
+                NewTabAutoRefreshSeconds = 0;
+            }
+            if (NewTabAutoRefreshSeconds > 0 && NewTabAutoRefreshSeconds < 30)
+            {
+                NewTabAutoRefreshSeconds = 30;
+            }
+            if (NewTabZoom < 0.25 || NewTabZoom > 5 || double.IsNaN(NewTabZoom))
+            {
+                NewTabZoom = 1.0;
             }
             if (string.IsNullOrEmpty(HomeUrl))
             {
@@ -229,6 +258,22 @@ namespace MuroSoc
             ClockFontSize = 18;
             ClockAllMonitors = false;
             CursorHideSeconds = 5;
+            ShowHoverBar = true;
+            NewTabAutoRefreshSeconds = 0;
+            NewTabHideScrollbars = false;
+            NewTabZoom = 1.0;
+        }
+
+        public TabModel NewTabModel(string url, string profile)
+        {
+            TabModel model = new TabModel();
+            model.Url = url ?? string.Empty;
+            model.Profile = profile;
+            model.AutoRefreshSeconds = NewTabAutoRefreshSeconds;
+            model.HideScrollbars = NewTabHideScrollbars;
+            model.Zoom = NewTabZoom;
+            model.Normalize();
+            return model;
         }
 
         private static bool ContainsIgnoreCase(List<string> list, string value)

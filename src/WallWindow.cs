@@ -96,12 +96,34 @@ namespace MuroSoc
         {
             if (showClock)
             {
-                clock.UpdateClock(App.Config, locked);
+                clock.UpdateClock(App.Config, locked, ClockArea(App.Config.ClockCorner));
             }
             else if (clock.Visible)
             {
                 clock.Visible = false;
             }
+        }
+
+        private Rectangle ClockArea(string corner)
+        {
+            Rectangle area = panel.Bounds;
+            if (area.Width <= 4 || area.Height <= 4)
+            {
+                return ClientRectangle;
+            }
+            string value = (corner ?? string.Empty).ToLowerInvariant();
+            bool left = value == "topleft" || value == "bottomleft";
+            bool bottom = value == "bottomleft" || value == "bottomright";
+            Point probe = new Point(left ? 2 : area.Width - 3, bottom ? area.Height - 3 : 2);
+            foreach (Cell cell in panel.Cells)
+            {
+                if (cell.Visible && cell.Bounds.Contains(probe))
+                {
+                    Control content = cell.ContentHost;
+                    return RectangleToClient(content.RectangleToScreen(content.ClientRectangle));
+                }
+            }
+            return area;
         }
 
         public void SetLocked(bool locked, bool activate)

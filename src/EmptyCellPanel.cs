@@ -82,9 +82,7 @@ namespace MuroSoc
                 return;
             }
             input.Text = string.Empty;
-            TabModel model = new TabModel();
-            model.Url = url;
-            model.Profile = cell.ProfileName;
+            TabModel model = App.Config.NewTabModel(url, cell.ProfileName);
             try
             {
                 await cell.CreateTabAsync(model, true);

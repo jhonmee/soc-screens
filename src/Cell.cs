@@ -23,7 +23,7 @@ namespace MuroSoc
         private readonly Label status;
         private readonly Panel content;
         private readonly EmptyCellPanel empty;
-        private readonly Label refreshBadge;
+        private readonly HoverBar hoverBar;
         private BrowserTab active;
         private bool dropTarget;
 
@@ -41,14 +41,9 @@ namespace MuroSoc
             empty.Dock = DockStyle.Fill;
             content.Controls.Add(empty);
 
-            refreshBadge = new Label();
-            refreshBadge.AutoSize = true;
-            refreshBadge.BackColor = Color.FromArgb(40, 40, 40);
-            refreshBadge.ForeColor = Color.Gainsboro;
-            refreshBadge.Padding = new Padding(4, 2, 4, 2);
-            refreshBadge.Visible = false;
-            content.Controls.Add(refreshBadge);
-            content.Resize += delegate { PlaceRefreshBadge(); };
+            hoverBar = new HoverBar(this);
+            content.Controls.Add(hoverBar);
+            content.Resize += delegate { PlaceHoverBar(); };
 
             status = new Label();
             status.Dock = DockStyle.Bottom;
@@ -236,29 +231,37 @@ namespace MuroSoc
         public void UpdateRefreshBadge()
         {
             BrowserTab tab = active;
-            string text = tab == null ? null : tab.RefreshCountdownText;
-            bool show = text != null && (Wall.EditMode || tab.IsHovered);
+            bool show = tab != null
+                && App.Config.ShowHoverBar
+                && !Wall.UiVisible
+                && !Wall.EditMode
+                && !Wall.IsLocked
+                && !Wall.IsCursorHidden
+                && (tab.IsHovered || hoverBar.ContainsCursor);
             if (show)
             {
-                if (refreshBadge.Text != text)
+                hoverBar.SetCountdown(tab.RefreshCountdownText);
+                if (!hoverBar.Visible)
                 {
-                    refreshBadge.Text = text;
-                    PlaceRefreshBadge();
+                    hoverBar.Visible = true;
                 }
-                if (!refreshBadge.Visible)
+                PlaceHoverBar();
+                hoverBar.BringToFront();
+            }
+            else if (hoverBar.Visible)
+            {
+                hoverBar.Visible = false;
+            }
+            if (strip.Visible)
+            {
+                foreach (BrowserTab item in tabs)
                 {
-                    refreshBadge.Visible = true;
-                    PlaceRefreshBadge();
+                    if (item.Settings.AutoRefreshSeconds > 0)
+                    {
+                        strip.Invalidate();
+                        break;
+                    }
                 }
-                refreshBadge.BringToFront();
-            }
-            else if (refreshBadge.Visible)
-            {
-                refreshBadge.Visible = false;
-            }
-            if (Wall.EditMode || tab != null && tab.IsHovered)
-            {
-                strip.Invalidate();
             }
             if (tab != null && tab.ErrorText != null)
             {
@@ -427,15 +430,20 @@ namespace MuroSoc
             return tab;
         }
 
-        private void PlaceRefreshBadge()
+        private void PlaceHoverBar()
         {
-            int margin = Dpi.Scale(this, 6);
-            refreshBadge.Location = new Point(Math.Max(0, content.ClientSize.Width - refreshBadge.Width - margin), margin);
+            int margin = Dpi.Scale(this, 8);
+            Point location = new Point(
+                Math.Max(0, content.ClientSize.Width - hoverBar.Width - margin),
+                Math.Max(0, content.ClientSize.Height - hoverBar.Height - margin));
+            if (hoverBar.Location != location)
+            {
+                hoverBar.Location = location;
+            }
         }
 
         private void ApplyScale()
         {
-            refreshBadge.Font = new Font("Segoe UI", Dpi.ScaleF(this, 11f), FontStyle.Regular, GraphicsUnit.Pixel);
             status.Height = Dpi.Scale(this, 22);
             status.Font = new Font("Segoe UI", Dpi.ScaleF(this, 12f), FontStyle.Bold, GraphicsUnit.Pixel);
         }

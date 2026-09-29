@@ -20,7 +20,7 @@ namespace MuroSoc
             Visible = false;
         }
 
-        public void UpdateClock(AppConfig config, bool locked)
+        public void UpdateClock(AppConfig config, bool locked, Rectangle area)
         {
             if (!config.ClockEnabled)
             {
@@ -54,7 +54,7 @@ namespace MuroSoc
             {
                 Text = text;
             }
-            Place(config.ClockCorner);
+            Place(config.ClockCorner, area);
             if (!Visible)
             {
                 Visible = true;
@@ -62,28 +62,26 @@ namespace MuroSoc
             BringToFront();
         }
 
-        private void Place(string corner)
+        private void Place(string corner, Rectangle area)
         {
-            Control parent = Parent;
-            if (parent == null)
+            if (Parent == null)
             {
                 return;
             }
             int margin = Dpi.Scale(this, 8);
-            Size area = parent.ClientSize;
-            int x = area.Width - Width - margin;
-            int y = margin;
+            int x = area.Right - Width - margin;
+            int y = area.Top + margin;
             switch ((corner ?? string.Empty).ToLowerInvariant())
             {
                 case "topleft":
-                    x = margin;
+                    x = area.Left + margin;
                     break;
                 case "bottomleft":
-                    x = margin;
-                    y = area.Height - Height - margin;
+                    x = area.Left + margin;
+                    y = area.Bottom - Height - margin;
                     break;
                 case "bottomright":
-                    y = area.Height - Height - margin;
+                    y = area.Bottom - Height - margin;
                     break;
             }
             Point location = new Point(Math.Max(0, x), Math.Max(0, y));
